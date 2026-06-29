@@ -60,6 +60,8 @@ services:
       context: ./services/ml
       dockerfile: Dockerfile
     container_name: kitu_ml
+    volumes:
+      - ./services/ml:/app
     ports:
       - "8001:8001"
     environment:
