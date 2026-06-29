@@ -48,15 +48,30 @@ class MpesaSmsParser
 
     private function extractDate(string $sms): ?string
     {
+        // Matches: 29/6/26, 29/06/2026, 1/12/26 etc, followed by "at H:MM AM/PM"
         if (preg_match('/(\d{1,2}\/\d{1,2}\/\d{2,4})\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)/i', $sms, $m)) {
-            return date('Y-m-d H:i:s', strtotime("{$m[1]} {$m[2]}"));
+            $datePart = $m[1];
+            $timePart = strtoupper(str_replace(' ', '', $m[2])); // "2:30PM"
+
+            // Normalize 2-digit year to 4-digit (assume 20xx)
+            $dateSegments = explode('/', $datePart);
+            $day = $dateSegments[0];
+            $month = $dateSegments[1];
+            $year = strlen($dateSegments[2]) === 2 ? '20' . $dateSegments[2] : $dateSegments[2];
+
+            // Explicit d/m/Y format — never let strtotime guess M/D/Y vs D/M/Y
+            $dateTime = \DateTime::createFromFormat('d/m/Y g:iA', "{$day}/{$month}/{$year} {$timePart}");
+
+            return $dateTime ? $dateTime->format('Y-m-d H:i:s') : null;
         }
         return null;
     }
 
     private function extractReference(string $sms): ?string
     {
-        if (preg_match('/\b([A-Z0-9]{10,12})\b/', $sms, $m)) {
+        // M-Pesa references are alphanumeric, 9-12 chars, mixing letters AND digits
+        // (pure 10-digit phone numbers won't match because they're digits only)
+        if (preg_match('/\b([A-Z][A-Z0-9]{8,11})\b/', $sms, $m)) {
             return $m[1];
         }
         return null;
