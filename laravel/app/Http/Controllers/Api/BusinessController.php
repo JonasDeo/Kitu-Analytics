@@ -16,7 +16,7 @@ class BusinessController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'name' => 'required|string|max:255',
             'type' => 'nullable|in:retail,vendor,service,agricultural',
             'industry' => 'nullable|string',
@@ -26,7 +26,7 @@ class BusinessController extends Controller
             'employee_count' => 'nullable|integer|min:1',
         ]);
 
-        $business = $request->user()->businesses()->create($request->validated());
+        $business = $request->user()->businesses()->create($validated);
 
         return response()->json($business, 201);
     }
@@ -44,7 +44,7 @@ class BusinessController extends Controller
     {
         $this->authorize('update', $business);
 
-        $request->validate([
+        $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'type' => 'sometimes|in:retail,vendor,service,agricultural',
             'industry' => 'sometimes|string',
@@ -53,7 +53,7 @@ class BusinessController extends Controller
             'employee_count' => 'sometimes|integer|min:1',
         ]);
 
-        $business->update($request->validated());
+        $business->update($validated);
 
         return response()->json($business);
     }
