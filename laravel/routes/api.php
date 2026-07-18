@@ -71,7 +71,7 @@ Route::prefix('v1')->group(function () {
     | Lender API routes (API key auth)
     |--------------------------------------------------------------------------
     */
-    Route::prefix('lender')->middleware('auth:sanctum')->group(function () {
+    Route::prefix('lender')->group(function () {
         Route::get('/credit-score/{phone}', [LenderController::class, 'getCreditScore']);
         Route::get('/business-profile/{phone}', [LenderController::class, 'getBusinessProfile']);
         Route::get('/portfolio', [LenderController::class, 'portfolio']);
