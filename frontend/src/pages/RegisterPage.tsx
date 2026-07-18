@@ -1,0 +1,153 @@
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { register, verifyOtp } from '../api/auth';
+import { useAuth } from '../context/AuthContext';
+
+const RegisterPage: React.FC = () => {
+  const [step, setStep] = useState<'register' | 'verify'>('register');
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [otp, setOtp] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { setToken } = useAuth();
+  const navigate = useNavigate();
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      await register(name, phone, password);
+      setStep('verify');
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Registration failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const res = await verifyOtp(phone, otp);
+      setToken(res.data.token);
+      navigate('/dashboard');
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Invalid OTP.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-navy-900 flex items-center justify-center px-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-10">
+          <h1 className="font-display text-5xl text-paper">Kitu</h1>
+          <p className="text-kitu-green text-sm mt-2 tracking-widest uppercase">Analytics</p>
+        </div>
+
+        <div className="bg-paper rounded-2xl p-8 shadow-2xl">
+          {step === 'register' ? (
+            <>
+              <h2 className="font-display text-2xl text-navy-900 mb-1">Register your business</h2>
+              <p className="text-navy-700 text-sm mb-8">Get your free financial intelligence score</p>
+
+              {error && (
+                <div className="bg-red-50 border border-kitu-red text-kitu-red text-sm rounded-lg px-4 py-3 mb-6">
+                  {error}
+                </div>
+              )}
+
+              <form onSubmit={handleRegister} className="space-y-5">
+                <div>
+                  <label className="block text-xs font-semibold text-navy-800 uppercase tracking-wider mb-2">Full Name</label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Jasiri Deo"
+                    className="w-full border border-navy-700/20 rounded-lg px-4 py-3 text-navy-900 bg-white focus:outline-none focus:ring-2 focus:ring-kitu-green text-sm"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-navy-800 uppercase tracking-wider mb-2">Phone Number</label>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="07XXXXXXXX"
+                    className="w-full border border-navy-700/20 rounded-lg px-4 py-3 text-navy-900 bg-white focus:outline-none focus:ring-2 focus:ring-kitu-green text-sm"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-navy-800 uppercase tracking-wider mb-2">Password</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full border border-navy-700/20 rounded-lg px-4 py-3 text-navy-900 bg-white focus:outline-none focus:ring-2 focus:ring-kitu-green text-sm"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-kitu-green text-white font-semibold py-3 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-sm tracking-wide"
+                >
+                  {loading ? 'Registering...' : 'Create Account'}
+                </button>
+              </form>
+
+              <p className="text-center text-sm text-navy-700 mt-6">
+                Already registered?{' '}
+                <Link to="/login" className="text-kitu-green font-semibold hover:underline">Sign in</Link>
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="font-display text-2xl text-navy-900 mb-1">Verify your phone</h2>
+              <p className="text-navy-700 text-sm mb-8">Enter the OTP sent to {phone}</p>
+
+              {error && (
+                <div className="bg-red-50 border border-kitu-red text-kitu-red text-sm rounded-lg px-4 py-3 mb-6">
+                  {error}
+                </div>
+              )}
+
+              <form onSubmit={handleVerify} className="space-y-5">
+                <div>
+                  <label className="block text-xs font-semibold text-navy-800 uppercase tracking-wider mb-2">OTP Code</label>
+                  <input
+                    type="text"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
+                    placeholder="Enter 6-digit OTP"
+                    className="w-full border border-navy-700/20 rounded-lg px-4 py-3 text-navy-900 bg-white focus:outline-none focus:ring-2 focus:ring-kitu-green text-sm text-center text-xl tracking-widest"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-kitu-green text-white font-semibold py-3 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 text-sm tracking-wide"
+                >
+                  {loading ? 'Verifying...' : 'Verify & Continue'}
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default RegisterPage;
