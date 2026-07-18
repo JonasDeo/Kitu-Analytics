@@ -25,3 +25,6 @@ export const getCreditScore = (businessId: number) =>
 
 export const getAlerts = (businessId: number) =>
   client.get(`/businesses/${businessId}/alerts`);
+
+export const getBusinessSummary = (businessId: number) =>
+  client.get(`/businesses/${businessId}/summary`);

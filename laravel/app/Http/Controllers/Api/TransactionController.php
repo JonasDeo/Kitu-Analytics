@@ -62,4 +62,46 @@ class TransactionController extends Controller
 
         return response()->json($transaction, 201);
     }
+
+    public function summary(Request $request, Business $business)
+{
+    $this->authorize('view', $business);
+
+    $totalIncoming = $business->transactions()
+        ->where('type', 'incoming')
+        ->sum('amount');
+
+    $totalOutgoing = $business->transactions()
+        ->whereIn('type', ['outgoing', 'withdrawal'])
+        ->sum('amount');
+
+    $transactionCount = $business->transactions()->count();
+
+    $incomingCount = $business->transactions()
+        ->where('type', 'incoming')
+        ->count();
+
+    $outgoingCount = $business->transactions()
+        ->whereIn('type', ['outgoing', 'withdrawal'])
+        ->count();
+
+    $firstTransaction = $business->transactions()
+        ->orderBy('transacted_at', 'asc')
+        ->value('transacted_at');
+
+    $lastTransaction = $business->transactions()
+        ->orderBy('transacted_at', 'desc')
+        ->value('transacted_at');
+
+    return response()->json([
+        'total_incoming' => (float) $totalIncoming,
+        'total_outgoing' => (float) $totalOutgoing,
+        'net_position' => (float) ($totalIncoming - $totalOutgoing),
+        'transaction_count' => $transactionCount,
+        'incoming_count' => $incomingCount,
+        'outgoing_count' => $outgoingCount,
+        'first_transaction_at' => $firstTransaction,
+        'last_transaction_at' => $lastTransaction,
+    ]);
+}
 }

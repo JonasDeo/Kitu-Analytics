@@ -56,6 +56,8 @@ Route::prefix('v1')->group(function () {
         Route::post('/businesses/{business}/transactions', [TransactionController::class, 'store']);
         Route::post('/businesses/{business}/transactions/parse-sms', [TransactionController::class, 'parseSms']);
 
+        Route::get('/businesses/{business}/summary', [TransactionController::class, 'summary']);
+        
         // Credit scores
         Route::get('/businesses/{business}/credit-score', [CreditScoreController::class, 'show']);
         Route::post('/businesses/{business}/credit-score/request', [CreditScoreController::class, 'request']);
