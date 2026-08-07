@@ -4,6 +4,7 @@ import {
   getBusinesses, requestCreditScore, getTransactions,
   getBusinessSummary, parseSms, getNetworkAnalysis,
   getForecast, getCreditReport,
+  submitAppeal,
 } from '../api/business';
 import { logout } from '../api/auth';
 import { useNavigate } from 'react-router-dom';
@@ -26,6 +27,58 @@ interface Summary { total_incoming: number; total_outgoing: number; net_position
 interface NetworkData { total_nodes: number; unique_counterparties: number; loyal_counterparties: number; network_health_score: number; top_counterparties: Array<{ phone: string; total_volume: number }>; }
 interface ForecastDay { date: string; predicted_net_flow: number; seasonal_multiplier: number; }
 interface Forecast { forecast: ForecastDay[]; summary: { total_predicted_net_flow: number; average_daily_flow: number; outlook: string }; }
+
+const AppealWidget: React.FC<{ businessId: number; score: number }> = ({ businessId, score }) => {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async () => {
+    if (reason.trim().length < 10) { setError('Tafadhali andika maelezo zaidi.'); return; }
+    setLoading(true); setError('');
+    try {
+      await submitAppeal(businessId, reason);
+      setSuccess(true); setReason('');
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Imeshindwa kutuma malalamiko.');
+    } finally { setLoading(false); }
+  };
+
+  if (success) return (
+    <div className="mt-4 p-4 bg-green-50 border border-kitu-green rounded-xl text-sm text-kitu-green font-medium">
+      ✓ Malalamiko yako yamepokelewa. Tutayashughulikia ndani ya masaa 48.
+    </div>
+  );
+
+  if (!open) return (
+    <button onClick={() => setOpen(true)}
+      className="mt-4 text-xs text-navy-700 hover:text-navy-900 underline underline-offset-2 transition-colors">
+      Je, data si sahihi? Lalamika hapa →
+    </button>
+  );
+
+  return (
+    <div className="mt-4 p-4 bg-paper rounded-xl border border-navy-900/10 w-full">
+      <div className="flex justify-between items-center mb-3">
+        <p className="text-xs font-semibold text-navy-800 uppercase tracking-wider">Lalamiko la Alama</p>
+        <button onClick={() => setOpen(false)}><X size={14} className="text-navy-700" /></button>
+      </div>
+      <p className="text-xs text-navy-700 mb-3">
+        Alama yako ya sasa ni <strong>{score}</strong>. Eleza kwa nini unafikiri data si sahihi.
+      </p>
+      <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3}
+        placeholder="Mfano: Miamala mingine ni ya matumizi ya nyumbani, si ya biashara. Ninataka iondolewe..."
+        className="w-full border border-navy-700/20 rounded-lg px-3 py-2 text-navy-900 bg-white focus:outline-none focus:ring-2 focus:ring-kitu-green text-xs resize-none" />
+      {error && <p className="text-kitu-red text-xs mt-1">{error}</p>}
+      <button onClick={handleSubmit} disabled={loading || reason.trim().length < 10}
+        className="mt-2 w-full bg-navy-900 text-white text-xs font-semibold py-2 rounded-lg hover:bg-navy-800 transition-colors disabled:opacity-40">
+        {loading ? 'Inatuma...' : 'Tuma Malalamiko'}
+      </button>
+    </div>
+  );
+};
 
 // ── Score Gauge ───────────────────────────────────────────────────────────────
 const ScoreGauge: React.FC<{ score: number; grade: string }> = ({ score, grade }) => {
@@ -295,6 +348,8 @@ const DashboardPage: React.FC = () => {
                   className="mt-4 flex items-center gap-2 text-xs text-kitu-green hover:text-green-700 font-semibold transition-colors disabled:opacity-50">
                   <RefreshCw size={12} className={loadingScore ? 'animate-spin' : ''} /> Hesabu Upya
                 </button>
+
+                <AppealWidget businessId={business.id} score={business.latest_credit_score.score} />
               </>
             ) : (
               <div className="flex flex-col items-center gap-4 py-4">

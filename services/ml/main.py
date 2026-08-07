@@ -7,6 +7,7 @@ import networkx as nx
 import shap
 import io
 import os
+import json
 from datetime import datetime, timedelta
 from sklearn.ensemble import GradientBoostingRegressor
 from reportlab.lib.pagesizes import A4
@@ -313,7 +314,7 @@ def record_repayment_outcome(payload: dict):
             "event": "repayment.outcome_posted",
             "type": "Business",
             "id": payload["business_id"],
-            "values": str({
+            "values": json.dumps({
                 "outcome": payload["outcome"],
                 "loan_amount": payload["loan_amount"],
                 "lender_id": payload["lender_id"],

@@ -90,5 +90,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/business-profile/{phone}', [LenderController::class, 'getBusinessProfile']);
         Route::get('/portfolio', [LenderController::class, 'portfolio']);
         Route::get('/revenue', [LenderController::class, 'revenue']);
+        Route::get('/report/{phone}', [LenderController::class, 'getCreditReport']);
+        Route::post('/repayment-outcome', [LenderController::class, 'postRepaymentOutcome']);
     });
 });

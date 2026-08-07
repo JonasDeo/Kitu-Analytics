@@ -40,3 +40,9 @@ export const getBotCompliance = (businessId: number) =>
 
 export const getCreditReport = (businessId: number) =>
   client.get(`/businesses/${businessId}/credit-report`, { responseType: 'blob' });
+
+export const submitAppeal = (businessId: number, reason: string) =>
+  client.post(`/businesses/${businessId}/credit-score/appeal`, { reason });
+
+export const postRepaymentOutcome = (phone: string, loanAmount: number, outcome: string) =>
+  client.post('/lender/repayment-outcome', { phone, loan_amount: loanAmount, outcome });
