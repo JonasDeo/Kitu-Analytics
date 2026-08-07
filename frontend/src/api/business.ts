@@ -28,3 +28,15 @@ export const getAlerts = (businessId: number) =>
 
 export const getBusinessSummary = (businessId: number) =>
   client.get(`/businesses/${businessId}/summary`);
+
+export const getNetworkAnalysis = (businessId: number) =>
+  client.get(`/businesses/${businessId}/network`);
+
+export const getForecast = (businessId: number) =>
+  client.get(`/businesses/${businessId}/forecast`);
+
+export const getBotCompliance = (businessId: number) =>
+  client.get(`/businesses/${businessId}/bot-compliance`);
+
+export const getCreditReport = (businessId: number) =>
+  client.get(`/businesses/${businessId}/credit-report`, { responseType: 'blob' });

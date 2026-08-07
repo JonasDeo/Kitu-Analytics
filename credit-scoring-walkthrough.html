@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading the ledger — a walkthrough of the credit-scoring service</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<style>
+  :root{
+    --paper:#F7F5EF;
+    --paper-raised:#FFFFFE;
+    --ink:#16233B;
+    --ink-soft:#2A3A57;
+    --gold:#B8862E;
+    --gold-soft:#F3E6CC;
+    --teal:#1F6E5C;
+    --teal-soft:#E1EFEA;
+    --rust:#B23B2E;
+    --rust-soft:#F6E4E1;
+    --slate:#3A4250;
+    --slate-mute:#7B8493;
+    --rule:#D9D3C4;
+    --sidebar-w:264px;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--slate);
+    font-family:'Inter',sans-serif;
+    font-size:16px;
+    line-height:1.65;
+  }
+  h1,h2,h3{
+    font-family:'Fraunces',serif;
+    color:var(--ink);
+    font-weight:600;
+    letter-spacing:-0.01em;
+  }
+  code, pre, .mono{ font-family:'JetBrains Mono', monospace; }
+
+  /* ---------- layout ---------- */
+  .shell{ display:flex; max-width:1180px; margin:0 auto; }
+  nav.sidebar{
+    width:var(--sidebar-w);
+    flex-shrink:0;
+    position:sticky;
+    top:0;
+    align-self:flex-start;
+    height:100vh;
+    overflow-y:auto;
+    padding:2.5rem 1.5rem 2.5rem 2rem;
+    border-right:1px solid var(--rule);
+    counter-reset:section;
+  }
+  .sidebar-brand{
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    font-size:1.05rem;
+    color:var(--ink);
+    margin-bottom:0.15rem;
+  }
+  .sidebar-sub{
+    font-size:0.75rem;
+    color:var(--slate-mute);
+    margin-bottom:1.75rem;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+  }
+  .navgroup-label{
+    font-size:0.68rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--slate-mute);
+    margin:1.4rem 0 0.5rem;
+  }
+  nav.sidebar ol{ list-style:none; margin:0; padding:0; }
+  nav.sidebar li{ counter-increment:section; margin:0; }
+  nav.sidebar a{
+    display:flex;
+    gap:0.6rem;
+    align-items:baseline;
+    padding:0.32rem 0;
+    font-size:0.86rem;
+    color:var(--slate);
+    text-decoration:none;
+    border-left:2px solid transparent;
+    padding-left:0.7rem;
+    margin-left:-0.72rem;
+    transition:color .15s ease, border-color .15s ease;
+  }
+  nav.sidebar a:hover{ color:var(--ink); border-color:var(--gold); }
+  nav.sidebar a::before{
+    content:counter(section, decimal-leading-zero);
+    font-family:'JetBrains Mono',monospace;
+    font-size:0.72rem;
+    color:var(--gold);
+    flex-shrink:0;
+  }
+
+  main{ flex:1; min-width:0; padding:3rem 3.5rem 6rem; }
+
+  /* ---------- hero ---------- */
+  .hero{ margin-bottom:3rem; }
+  .eyebrow{
+    display:inline-block;
+    font-family:'JetBrains Mono',monospace;
+    font-size:0.72rem;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--gold);
+    background:var(--gold-soft);
+    padding:0.28rem 0.65rem;
+    border-radius:3px;
+    margin-bottom:1.1rem;
+  }
+  .hero h1{ font-size:2.4rem; line-height:1.12; margin:0 0 0.9rem; max-width:14ch; }
+  .hero p.lede{ font-size:1.08rem; color:var(--ink-soft); max-width:56ch; margin:0 0 1.6rem; }
+  .hero-meta{ display:flex; gap:1.8rem; flex-wrap:wrap; align-items:center; }
+  .meta-item{ font-size:0.82rem; color:var(--slate-mute); }
+  .meta-item strong{ color:var(--ink); font-family:'JetBrains Mono',monospace; font-weight:500; }
+
+  .gauge-row{
+    display:flex; gap:2rem; align-items:center;
+    margin-top:2rem; padding:1.4rem 1.6rem;
+    background:var(--paper-raised); border:1px solid var(--rule); border-radius:10px;
+  }
+  .gauge-note{ font-size:0.85rem; color:var(--slate-mute); max-width:38ch; }
+  .gauge-note b{ color:var(--ink); }
+
+  /* ---------- ledger rule ---------- */
+  .ledger-rule{ border:none; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); height:3px; margin:3.2rem 0; }
+
+  /* ---------- sections ---------- */
+  section{ margin-bottom:3.4rem; scroll-margin-top:2rem; }
+  section h2{
+    font-size:1.5rem;
+    display:flex; align-items:baseline; gap:0.75rem;
+    margin:0 0 0.35rem;
+  }
+  section h2 .num{
+    font-family:'JetBrains Mono',monospace;
+    font-size:0.95rem;
+    font-weight:500;
+    color:var(--gold);
+  }
+  section h3{ font-size:1.05rem; margin:1.6rem 0 0.5rem; color:var(--ink); }
+  section p{ margin:0 0 0.9rem; }
+  section p.tag{
+    font-size:0.85rem; color:var(--slate-mute); margin:0 0 1.2rem; font-style:italic;
+  }
+
+  pre{
+    background:var(--paper-raised);
+    border:1px solid var(--rule);
+    border-left:3px solid var(--ink);
+    border-radius:6px;
+    padding:1rem 1.2rem;
+    overflow-x:auto;
+    font-size:0.86rem;
+    margin:0.9rem 0 1.2rem;
+  }
+  pre code.hljs{ background:transparent; padding:0; }
+  :not(pre) > code{
+    background:var(--gold-soft);
+    color:#7A5A1D;
+    padding:0.1rem 0.4rem;
+    border-radius:3px;
+    font-size:0.87em;
+  }
+
+  .example{
+    display:flex; gap:1.2rem; flex-wrap:wrap;
+    background:var(--paper-raised);
+    border:1px solid var(--rule);
+    border-radius:8px;
+    padding:1rem 1.3rem;
+    margin:0.9rem 0 1.2rem;
+    font-size:0.9rem;
+  }
+  .example .col{ flex:1; min-width:160px; }
+  .example .label{ font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--slate-mute); margin-bottom:0.3rem; }
+  .example .val{ font-family:'JetBrains Mono',monospace; color:var(--ink); }
+  .example .arrow{ align-self:center; color:var(--gold); font-size:1.1rem; }
+
+  table.data{ width:100%; border-collapse:collapse; margin:0.9rem 0 1.2rem; font-size:0.9rem; }
+  table.data th, table.data td{ text-align:left; padding:0.55rem 0.8rem; border-bottom:1px solid var(--rule); }
+  table.data th{ font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--slate-mute); font-weight:500; }
+  table.data td.grade{ font-family:'JetBrains Mono',monospace; font-weight:500; }
+  .grade-A{ color:var(--teal); } .grade-B{ color:#2E7D5B; } .grade-C{ color:var(--gold); } .grade-D{ color:#C46A2E; } .grade-F{ color:var(--rust); }
+
+  .note-box{
+    border-radius:8px; padding:0.9rem 1.1rem; margin:0.9rem 0 1.2rem; font-size:0.9rem;
+    display:flex; gap:0.7rem;
+  }
+  .note-box.gap{ background:var(--rust-soft); border:1px solid #E3C1BB; }
+  .note-box.good{ background:var(--teal-soft); border:1px solid #BFDAD1; }
+  .note-box .mark{ font-family:'JetBrains Mono',monospace; font-weight:600; }
+  .note-box.gap .mark{ color:var(--rust); }
+  .note-box.good .mark{ color:var(--teal); }
+
+  /* ---------- endpoint pill ---------- */
+  .endpoint{
+    display:inline-flex; align-items:center; gap:0.5rem;
+    font-family:'JetBrains Mono',monospace; font-size:0.85rem;
+    background:var(--ink); color:#EFE9DA;
+    padding:0.3rem 0.75rem; border-radius:5px;
+    margin-bottom:0.9rem;
+  }
+  .endpoint .verb{ color:#8FD1B8; font-weight:600; }
+
+  /* ---------- architecture flow ---------- */
+  .flow{ display:flex; flex-direction:column; align-items:center; gap:0; margin:1.5rem 0 2rem; }
+  .flow-node{
+    background:var(--paper-raised); border:1px solid var(--rule); border-radius:8px;
+    padding:0.65rem 1.2rem; font-size:0.87rem; color:var(--ink); text-align:center;
+    min-width:220px;
+  }
+  .flow-node.split{ display:flex; gap:0; width:100%; max-width:520px; }
+  .flow-node.split > div{ flex:1; padding:0.65rem 1rem; }
+  .flow-node.split > div:first-child{ border-right:1px solid var(--rule); }
+  .flow-node.accent{ border-color:var(--gold); background:var(--gold-soft); color:#7A5A1D; }
+  .flow-arrow{ color:var(--slate-mute); font-size:1rem; padding:0.25rem 0; }
+  .flow-branch{ display:flex; gap:2.4rem; align-items:flex-start; }
+  .flow-branch .flow-col{ display:flex; flex-direction:column; align-items:center; gap:0.4rem; }
+
+  /* ---------- strengths / improvements ---------- */
+  .cards-two{ display:grid; grid-template-columns:1fr 1fr; gap:1.2rem; margin:1rem 0 1.5rem; }
+  .card{ background:var(--paper-raised); border:1px solid var(--rule); border-radius:8px; padding:1.2rem 1.3rem; }
+  .card h3{ margin-top:0; display:flex; align-items:center; gap:0.5rem; font-size:0.95rem; }
+  .card ul{ margin:0; padding-left:1.15rem; font-size:0.88rem; }
+  .card li{ margin-bottom:0.5rem; }
+  .card.strength h3{ color:var(--teal); }
+  .card.improve h3{ color:var(--rust); }
+
+  footer{
+    border-top:1px solid var(--rule); padding-top:1.5rem; margin-top:2.5rem;
+    font-size:0.82rem; color:var(--slate-mute);
+  }
+
+  @media (max-width: 880px){
+    nav.sidebar{ display:none; }
+    main{ padding:2rem 1.3rem 4rem; }
+    .cards-two{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="sidebar">
+    <div class="sidebar-brand">The ledger</div>
+    <div class="sidebar-sub">Code walkthrough</div>
+
+    <div class="navgroup-label">Setup</div>
+    <ol>
+      <li><a href="#s1">Imports</a></li>
+      <li><a href="#s2">Creating the API</a></li>
+      <li><a href="#s3">Database connection</a></li>
+      <li><a href="#s4">Model version</a></li>
+    </ol>
+
+    <div class="navgroup-label">Seasonal logic</div>
+    <ol start="5">
+      <li><a href="#s5">Tanzanian seasons</a></li>
+      <li><a href="#s6">Seasonal multiplier</a></li>
+    </ol>
+
+    <div class="navgroup-label">Scoring pipeline</div>
+    <ol start="7">
+      <li><a href="#s7">Loading transactions</a></li>
+      <li><a href="#s8">Feature engineering</a></li>
+      <li><a href="#s9">The /score endpoint</a></li>
+    </ol>
+
+    <div class="navgroup-label">Other endpoints</div>
+    <ol start="10">
+      <li><a href="#s10">/network</a></li>
+      <li><a href="#s11">/forecast</a></li>
+      <li><a href="#s12">/repayment-outcome</a></li>
+      <li><a href="#s13">/report</a></li>
+      <li><a href="#s14">/bot-compliance</a></li>
+    </ol>
+
+    <div class="navgroup-label">Review</div>
+    <ol start="15">
+      <li><a href="#s15">Architecture</a></li>
+      <li><a href="#s16">Strengths and gaps</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <span class="eyebrow">Code walkthrough · main.py</span>
+      <h1>Reading the ledger: the Kitu ML Service</h1>
+      <p class="lede">Kitu ML Service (v2.0.0) reads a business's mobile-money transaction history, turns it into a credit score, forecasts the next two weeks of cash flow, maps who the business trades with, and writes it all up as a lender-ready report. In one sentence, it answers: <b>can this business repay a loan?</b></p>
+      <div class="hero-meta">
+        <div class="meta-item">Framework <strong>FastAPI</strong></div>
+        <div class="meta-item">Model version <strong>v0.2-seasonal-network-shap</strong></div>
+        <div class="meta-item">Endpoints <strong>9</strong></div>
+      </div>
+
+      <div class="gauge-row">
+        <svg width="92" height="92" viewBox="0 0 92 92" role="img" aria-label="Example score gauge showing 862 out of 1000, grade A">
+          <circle cx="46" cy="46" r="38" fill="none" stroke="#EAE5D6" stroke-width="9"/>
+          <circle cx="46" cy="46" r="38" fill="none" stroke="#1F6E5C" stroke-width="9"
+                  stroke-dasharray="238.76" stroke-dashoffset="35.8"
+                  stroke-linecap="round" transform="rotate(-90 46 46)"/>
+          <text x="46" y="43" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="17" font-weight="600" fill="#16233B">862</text>
+          <text x="46" y="60" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#1F6E5C">grade A</text>
+        </svg>
+        <p class="gauge-note">A worked example carried through this walkthrough: a repayment likelihood of <b>86.2%</b> becomes a final score of <b>862</b>, which clears the 800 threshold for an <b>A</b>.</p>
+      </div>
+    </div>
+
+    <hr class="ledger-rule">
+
+    <!-- 1 -->
+    <section id="s1">
+      <h2><span class="num">01</span> Imports</h2>
+      <p><code>fastapi</code> builds the web API — every function wearing an <code>@app.get(...)</code> decorator becomes a callable endpoint, like <code>GET /score/15</code>. <code>sqlalchemy</code> connects to the database directly, so the service reads live transactions from MySQL or Postgres rather than static CSVs. <code>pandas</code> turns the transaction table into a DataFrame for analysis, and <code>numpy</code> handles the numerical work underneath it.</p>
+      <p><code>networkx</code> builds a graph of who trades with whom — business, counterparties, and the links between them. <code>shap</code> is imported for model explainability, but it's worth flagging early: <b>the real SHAP library is never actually called</b>. The code computes its own simplified, SHAP-like contribution values by hand instead. <code>GradientBoostingRegressor</code> from scikit-learn is the one genuine trained model in the service, used later for cash-flow forecasting. <code>reportlab</code> handles PDF report generation.</p>
+    </section>
+
+    <!-- 2 -->
+    <section id="s2">
+      <h2><span class="num">02</span> Creating the API</h2>
+      <pre><code class="language-python">app = FastAPI(title="Kitu ML Service", version="2.0.0")</code></pre>
+      <p>This single line creates the web application and names it. Every subsequent <code>@app.get(...)</code> decorated function hangs off this object as a route — including two housekeeping ones:</p>
+      <span class="endpoint"><span class="verb">GET</span> /</span>
+      <span class="endpoint"><span class="verb">GET</span> /health</span>
+      <p>The root returns a one-line status string; <code>/health</code> reports service name and the current <code>MODEL_VERSION</code> — useful for uptime checks and confirming which scoring logic is live.</p>
+    </section>
+
+    <!-- 3 -->
+    <section id="s3">
+      <h2><span class="num">03</span> Database connection</h2>
+      <pre><code class="language-python">DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)</code></pre>
+      <p>The connection string is read from the environment — typically something like <code>postgresql://...</code> — and used to create the SQLAlchemy engine every other query in the service depends on.</p>
+    </section>
+
+    <!-- 4 -->
+    <section id="s4">
+      <h2><span class="num">04</span> Model version</h2>
+      <pre><code class="language-python">MODEL_VERSION = "v0.2-seasonal-network-shap"</code></pre>
+      <p>Rather than scattering version numbers across the codebase, the API surfaces this one string in its responses so a client always knows which scoring logic produced a given result.</p>
+    </section>
+
+    <hr class="ledger-rule">
+
+    <!-- 5 -->
+    <section id="s5">
+      <h2><span class="num">05</span> Tanzanian seasonal calendar</h2>
+      <p class="tag">One of the more distinctive design choices in the service.</p>
+      <p>Instead of treating every day as identical, <code>TANZANIAN_SEASONS</code> encodes the rhythm of local economic life: salary days, Ramadan, harvest season, and weekly market days. Each period shifts how much weight a business's activity should carry.</p>
+      <div class="example">
+        <div class="col"><div class="label">Salary week</div><div class="val">More cash in → higher sales → lower risk</div></div>
+        <div class="col"><div class="label">Harvest season</div><div class="val">Farmers earn → shops sell more → healthier books</div></div>
+      </div>
+      <p>The calendar itself is a plain dictionary — salary days run from the 25th through the 4th, Ramadan is approximated to two months since it shifts yearly, harvest covers the long-rains and short-rains windows, and market days are set to Monday and Thursday.</p>
+    </section>
+
+    <!-- 6 -->
+    <section id="s6">
+      <h2><span class="num">06</span> Seasonal multiplier</h2>
+      <pre><code class="language-python">def get_seasonal_multiplier(date):
+    ...</code></pre>
+      <p>Given a date, the function checks whether it falls in a salary period, Ramadan, harvest, or a market day, and multiplies together whichever apply — each condition is independent, so a date can stack more than one.</p>
+      <table class="data">
+        <tr><th>Condition</th><th>Multiplier</th></tr>
+        <tr><td>Salary period (25th–4th)</td><td class="mono">× 1.5</td></tr>
+        <tr><td>Ramadan months</td><td class="mono">× 1.2</td></tr>
+        <tr><td>Harvest months</td><td class="mono">× 1.15</td></tr>
+        <tr><td>Market day (Mon/Thu)</td><td class="mono">× 1.1</td></tr>
+      </table>
+      <div class="example">
+        <div class="col"><div class="label">Salary period</div><div class="val">× 1.5</div></div>
+        <div class="col"><div class="label">Harvest</div><div class="val">× 1.15</div></div>
+        <div class="col"><div class="label">Market day</div><div class="val">× 1.1</div></div>
+        <div class="arrow">→</div>
+        <div class="col"><div class="label">Combined</div><div class="val">≈ 1.90</div></div>
+      </div>
+      <p>A date stacking those three is treated as almost twice as favorable as an ordinary day. Add Ramadan on top of all three and it would climb to roughly 2.27.</p>
+    </section>
+
+    <hr class="ledger-rule">
+
+    <!-- 7 -->
+    <section id="s7">
+      <h2><span class="num">07</span> Loading transactions</h2>
+      <pre><code class="language-python">def load_transactions(business_id):
+    # SELECT ... FROM transactions WHERE business_id = ?
+    ...</code></pre>
+      <p>Runs a parameterized SQL query and returns a pandas DataFrame rather than raw rows. <code>amount</code> is cast to a float and <code>transacted_at</code> to a real datetime, so everything downstream can treat the data as numeric and time-aware from the start.</p>
+    </section>
+
+    <!-- 8 -->
+    <section id="s8">
+      <h2><span class="num">08</span> Feature engineering</h2>
+      <p class="tag">The heart of the scoring pipeline — where raw transactions become the measurements the score is built from.</p>
+      <pre><code class="language-python">def engineer_features(df):
+    ...</code></pre>
+      <p>Models don't consume raw transaction rows well; they need summarized signals. This function produces four of them.</p>
+
+      <h3>Transaction frequency</h3>
+      <p><code>active_days / total_days</code>. A business observed for 30 days that traded on 24 of them scores 24/30 = <b>80</b>. Businesses that show up regularly read as healthier.</p>
+
+      <h3>Cash flow stability</h3>
+      <p>For each day, net flow is <code>incoming − outgoing</code>. The code measures how consistent that daily net is using the coefficient of variation:</p>
+      <pre><code class="language-python">CV = standard_deviation / abs(mean)</code></pre>
+      <table class="data">
+        <tr><th>Pattern</th><th>Day 1</th><th>Day 2</th><th>Day 3</th><th>Reading</th></tr>
+        <tr><td>Stable</td><td class="mono">1,000</td><td class="mono">900</td><td class="mono">1,100</td><td>low CV → high score</td></tr>
+        <tr><td>Volatile</td><td class="mono">10,000</td><td class="mono">−5,000</td><td class="mono">8,000</td><td>high CV → penalized</td></tr>
+      </table>
+      <p>The final score is <code>100 − penalty</code>, so lower volatility earns a higher score.</p>
+
+      <h3>Seasonal score</h3>
+      <p>Every transaction date is stamped with its multiplier from Section 06 (1.0, 1.5, 1.65, and so on), and the mean across all transactions becomes the seasonal alignment score — businesses active during favorable periods score higher here.</p>
+
+      <h3>Network health</h3>
+      <p>Counts unique counterparties. A business trading with a single person reads as fragile; one trading with 75 reads as resilient. Roughly ten or more unique counterparties maps to the maximum score of 100.</p>
+
+      <h3>Repayment likelihood</h3>
+      <p>The four scores above are combined as a fixed weighted average — <b>not</b> a trained model:</p>
+      <table class="data">
+        <tr><th>Factor</th><th>Weight</th></tr>
+        <tr><td>Cash flow stability</td><td class="mono">35%</td></tr>
+        <tr><td>Transaction frequency</td><td class="mono">30%</td></tr>
+        <tr><td>Network health</td><td class="mono">20%</td></tr>
+        <tr><td>Seasonal alignment</td><td class="mono">15%</td></tr>
+      </table>
+    </section>
+
+    <!-- 9 -->
+    <section id="s9">
+      <h2><span class="num">09</span> The /score endpoint</h2>
+      <span class="endpoint"><span class="verb">GET</span> /score/{business_id}</span>
+      <p>Ties everything together: load transactions → engineer features → compute contributions → produce the final score → assign a grade.</p>
+
+      <h3>SHAP-like values</h3>
+      <p>Rather than calling the imported SHAP library, the endpoint approximates feature importance by hand:</p>
+      <pre><code class="language-python">shap_values = {
+    k: round((factors[k] / 100) * weight * 1000, 2)
+    for k, weight in feature_weights.items()
+}</code></pre>
+      <p>Each factor score is normalized to 0–1, multiplied by its weight, then scaled onto the same 0–1000 range as the final score. A cash-flow stability score of 90 at its 35% weight contributes <code>(90/100) × 0.35 × 1000 = 315</code> — so the four contributions read on the same scale as the score itself, rather than as small percentage points.</p>
+
+      <h3>Final score and grade</h3>
+      <pre><code class="language-python">score = repayment_likelihood * 10  # clamped to 0–1000</code></pre>
+      <p>A repayment likelihood of 86.2% becomes a score of 862, matching the gauge at the top of this page.</p>
+      <table class="data">
+        <tr><th>Score range</th><th>Grade</th></tr>
+        <tr><td class="mono">800+</td><td class="grade grade-A">A</td></tr>
+        <tr><td class="mono">650–799</td><td class="grade grade-B">B</td></tr>
+        <tr><td class="mono">500–649</td><td class="grade grade-C">C</td></tr>
+        <tr><td class="mono">350–499</td><td class="grade grade-D">D</td></tr>
+        <tr><td class="mono">below 350</td><td class="grade grade-F">F</td></tr>
+      </table>
+    </section>
+
+    <hr class="ledger-rule">
+
+    <!-- 10 -->
+    <section id="s10">
+      <h2><span class="num">10</span> /network</h2>
+      <span class="endpoint"><span class="verb">GET</span> /network/{business_id}</span>
+      <p>Builds a directed graph with NetworkX — edges point from counterparty to business for incoming money, and business to counterparty for outgoing. From that graph it reads off in-degree and out-degree for the business, then adds three more views: the top 5 counterparties by transaction volume, "loyal" counterparties defined as anyone with 3 or more transactions, and a network health score of <code>(unique counterparties / 10) × 100</code>, capped at 100 — the same formula used inside the score itself.</p>
+    </section>
+
+    <!-- 11 -->
+    <section id="s11">
+      <h2><span class="num">11</span> /forecast</h2>
+      <span class="endpoint"><span class="verb">GET</span> /forecast/{business_id}</span>
+      <p class="tag">The one endpoint backed by a genuinely trained model rather than hand-built rules.</p>
+      <p>The endpoint first checks there's enough history — fewer than 7 days of transactions returns a 422 rather than a forecast. Otherwise transactions are aggregated into daily net cash flow, each day gets three features — day of week, day of month, and the seasonal multiplier — and a <code>GradientBoostingRegressor</code> (100 estimators) is trained on the spot:</p>
+      <pre><code class="language-python">X = daily[["dow", "dom", "seasonal"]]
+y = daily["net_flow"]
+model.fit(X, y)
+
+predictions = model.predict(forecast_features)  # next 14 days</code></pre>
+      <p>The response returns the day-by-day forecast plus a summary of whether the outlook is positive or negative.</p>
+    </section>
+
+    <!-- 12 -->
+    <section id="s12">
+      <h2><span class="num">12</span> /repayment-outcome</h2>
+      <span class="endpoint"><span class="verb">POST</span> /repayment-outcome</span>
+      <p>Lets a lender (MFI) report back what actually happened after a loan. The request body must include <code>business_id</code>, <code>loan_amount</code>, <code>outcome</code>, and <code>lender_id</code> — missing any of them returns a 422, as does an <code>outcome</code> outside <code>on_time</code>, <code>late</code>, or <code>default</code>. Valid submissions are logged to the <code>audit_logs</code> table. Nothing retrains automatically, but it's laying down the labeled dataset a real supervised model would eventually need.</p>
+    </section>
+
+    <!-- 13 -->
+    <section id="s13">
+      <h2><span class="num">13</span> /report</h2>
+      <span class="endpoint"><span class="verb">GET</span> /report/{business_id}</span>
+      <p>Loads the transaction data, calculates the score, and builds a styled PDF via ReportLab, branded "Kitu Analytics — Credit Intelligence Report" in navy and green. It lays out four sections in order — a credit score summary table, the factor breakdown with each contribution, a financial summary in TZS, and a disclaimer noting the report isn't financial advice — then streams the file back as <code>kitu_credit_report_&#123;business_id&#125;.pdf</code>.</p>
+    </section>
+
+    <!-- 14 -->
+    <section id="s14">
+      <h2><span class="num">14</span> /bot-compliance</h2>
+      <span class="endpoint"><span class="verb">GET</span> /bot-compliance/{business_id}</span>
+      <p>A regulator-facing report for Bank of Tanzania review, versioned as <code>BoT_compliance_v1</code>. It states the score and which factors produced it, confirms no protected attributes were used, notes data residency (Johannesburg, ZA on DigitalOcean), and confirms consent was verified under the PDPA 2022 framework. Fairness indicators include an appeal mechanism and bilingual explanations (English and Swahili), and the regulatory notes cover the right to withdraw consent, immutable audit logging, and a 48-hour SLA on appeals.</p>
+    </section>
+
+    <hr class="ledger-rule">
+
+    <!-- 15 architecture -->
+    <section id="s15">
+      <h2><span class="num">15</span> How it fits together</h2>
+      <div class="flow">
+        <div class="flow-node accent">API request</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node">FastAPI endpoint</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node">Load transactions (SQL)</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node">Pandas processing</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node">Feature engineering<br><span style="font-size:0.78rem;color:var(--slate-mute)">frequency · stability · network · seasonality</span></div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node split">
+          <div>Credit score</div>
+          <div>Cash-flow forecast</div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node split">
+          <div>JSON response</div>
+          <div>Gradient boosting</div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node accent">PDF reports and compliance</div>
+      </div>
+    </section>
+
+    <!-- 16 strengths -->
+    <section id="s16">
+      <h2><span class="num">16</span> Strengths and gaps</h2>
+      <div class="cards-two">
+        <div class="card strength">
+          <h3><i>+</i> Strengths</h3>
+          <ul>
+            <li>Clean separation between data loading, feature engineering, and endpoints</li>
+            <li>Effective use of pandas for transaction analysis</li>
+            <li>Built-in explainability via feature contributions</li>
+            <li>Scoring, forecasting, network analysis, and reporting from one API</li>
+            <li>Professional, lender-ready PDF output</li>
+          </ul>
+        </div>
+        <div class="card improve">
+          <h3><i>!</i> Areas to improve</h3>
+          <ul>
+            <li>The imported <code>shap</code> library is never used — contributions are hand-approximated instead</li>
+            <li>The score is a fixed weighted formula, not a trained model — repayment outcomes already being logged could train one</li>
+            <li>The forecasting model retrains on every request; training offline and serving a saved model would scale better</li>
+            <li>Features could grow to include rolling averages, amount trends over time, and fraud indicators</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="note-box good">
+        <span class="mark">Bottom line —</span>
+        <span>A solid foundation for a mobile-money credit-scoring platform, combining business rules, feature engineering, graph analysis, real forecasting, and reporting in one service. The clearest next step is moving from the current rule-based score to a model trained on real repayment outcomes as they accumulate.</span>
+      </div>
+    </section>
+
+    <footer>
+      Reference notes for <code>main.py</code> — a FastAPI credit-scoring microservice for mobile-money transaction analysis.
+    </footer>
+  </main>
+</div>
+
+<script>
+  hljs.highlightAll();
+</script>
+</body>
+</html>

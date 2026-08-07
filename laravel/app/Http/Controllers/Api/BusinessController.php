@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use Illuminate\Support\Facades\Http;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use Illuminate\Http\Request;
@@ -56,5 +57,64 @@ class BusinessController extends Controller
         $business->update($validated);
 
         return response()->json($business);
+    }
+
+    public function network(Request $request, Business $business)
+    {
+        $this->authorize('view', $business);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(15)->get("{$mlServiceUrl}/network/{$business->id}");
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Network analysis unavailable.'], 502);
+        }
+
+        return response()->json($response->json());
+    }
+
+    public function forecast(Request $request, Business $business)
+    {
+        $this->authorize('view', $business);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(15)->get("{$mlServiceUrl}/forecast/{$business->id}");
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Forecast unavailable.'], 502);
+        }
+
+        return response()->json($response->json());
+    }
+
+    public function botCompliance(Request $request, Business $business)
+    {
+        $this->authorize('view', $business);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(15)->get("{$mlServiceUrl}/bot-compliance/{$business->id}");
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Compliance report unavailable.'], 502);
+        }
+
+        return response()->json($response->json());
+    }
+
+    public function creditReport(Request $request, Business $business)
+    {
+        $this->authorize('view', $business);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(30)->get("{$mlServiceUrl}/report/{$business->id}");
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Could not generate report.'], 502);
+        }
+
+        return response($response->body(), 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => "attachment; filename=kitu_credit_report_{$business->id}.pdf",
+        ]);
     }
 }

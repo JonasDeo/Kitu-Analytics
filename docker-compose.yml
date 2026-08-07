@@ -14,7 +14,7 @@ services:
     networks:
       - kitu_network
 
-  # ── Laravel (PHP 8.2) ──
+  # ── Laravel (PHP 8.4) ──
   php:
     build:
       context: ./docker/php
@@ -39,7 +39,7 @@ services:
     volumes:
       - kitu_postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - kitu_network
 

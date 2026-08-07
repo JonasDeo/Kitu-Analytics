@@ -9,6 +9,7 @@ use App\Models\RevenueEvent;
 use App\Models\User;
 use App\Models\AuditLog;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class LenderController extends Controller
@@ -187,5 +188,78 @@ class LenderController extends Controller
         } else {
             return 'DECLINE - Score below lending threshold.';
         }
+    }
+
+    public function getCreditReport(Request $request, string $phone)
+    {
+        $lender = $this->authenticateLender($request);
+
+        $user = User::where('phone', $phone)->first();
+        if (!$user || !$user->hasConsented('lender_access')) {
+            return response()->json(['message' => 'Not found or consent not given.'], 404);
+        }
+
+        $business = $user->businesses()->first();
+        if (!$business) {
+            return response()->json(['message' => 'No business found.'], 404);
+        }
+
+        // Log billing event — PDF report costs more
+        RevenueEvent::create([
+            'lender_id' => $lender->id,
+            'event_type' => 'pdf_report',
+            'reference' => 'RPT-' . strtoupper(Str::random(10)),
+            'amount_tzs' => 5000,
+            'status' => 'billed',
+            'billed_at' => now(),
+            'metadata' => ['business_id' => $business->id, 'type' => 'pdf_credit_report'],
+        ]);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(30)->get("{$mlServiceUrl}/report/{$business->id}");
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Could not generate report.'], 502);
+        }
+
+        return response($response->body(), 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => "attachment; filename=kitu_credit_report_{$business->id}.pdf",
+        ]);
+    }
+
+    public function postRepaymentOutcome(Request $request)
+    {
+        $lender = $this->authenticateLender($request);
+
+        $request->validate([
+            'phone' => 'required|string',
+            'loan_amount' => 'required|numeric',
+            'outcome' => 'required|in:on_time,late,default',
+        ]);
+
+        $user = User::where('phone', $request->phone)->first();
+        if (!$user) {
+            return response()->json(['message' => 'User not found.'], 404);
+        }
+
+        $business = $user->businesses()->first();
+        if (!$business) {
+            return response()->json(['message' => 'Business not found.'], 404);
+        }
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(10)->post("{$mlServiceUrl}/repayment-outcome", [
+            'business_id' => $business->id,
+            'loan_amount' => $request->loan_amount,
+            'outcome' => $request->outcome,
+            'lender_id' => $lender->id,
+        ]);
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Could not record outcome.'], 502);
+        }
+
+        return response()->json($response->json());
     }
 }

@@ -66,6 +66,18 @@ Route::prefix('v1')->group(function () {
         // Alerts
         Route::get('/businesses/{business}/alerts', [AlertController::class, 'index']);
         Route::patch('/businesses/{business}/alerts/{alert}/read', [AlertController::class, 'markRead']);
+
+        // Network analysis
+        Route::get('/businesses/{business}/network', [BusinessController::class, 'network']);
+
+        // Cash flow forecast
+        Route::get('/businesses/{business}/forecast', [BusinessController::class, 'forecast']);
+
+        // BoT compliance
+        Route::get('/businesses/{business}/bot-compliance', [BusinessController::class, 'botCompliance']);
+
+        // PDF credit report
+        Route::get('/businesses/{business}/credit-report', [BusinessController::class, 'creditReport']);
     });
 
     /*
