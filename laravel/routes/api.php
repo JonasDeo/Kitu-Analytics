@@ -78,6 +78,9 @@ Route::prefix('v1')->group(function () {
 
         // PDF credit report
         Route::get('/businesses/{business}/credit-report', [BusinessController::class, 'creditReport']);
+
+        // Fraud Detection
+        Route::get('/businesses/{business}/fraud', [BusinessController::class, 'fraudCheck']);
     });
 
     /*
@@ -92,5 +95,6 @@ Route::prefix('v1')->group(function () {
         Route::get('/revenue', [LenderController::class, 'revenue']);
         Route::get('/report/{phone}', [LenderController::class, 'getCreditReport']);
         Route::post('/repayment-outcome', [LenderController::class, 'postRepaymentOutcome']);
+        Route::get('/pre-approvals', [LenderController::class, 'getPreApprovals']);
     });
 });

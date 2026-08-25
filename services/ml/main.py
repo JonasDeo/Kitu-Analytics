@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import create_engine, text
+from collections import Counter
+import hashlib
 import pandas as pd
 import numpy as np
 import networkx as nx
@@ -10,6 +12,7 @@ import os
 import json
 from datetime import datetime, timedelta
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import IsolationForest
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.colors import HexColor
@@ -513,4 +516,194 @@ def bot_compliance_report(business_id: int):
             "All scoring decisions logged in immutable audit trail",
             "Appeals resolved within 48 hours per SLA",
         ],
+    }
+
+@app.get("/fraud/{business_id}")
+def detect_fraud(business_id: int):
+    """Detect suspicious transaction patterns."""
+    df = load_transactions(business_id)
+
+    flags = []
+    risk_score = 0
+
+    # ── 1. Velocity anomaly ──────────────────────────────────────────────────
+    # Sudden spike in transaction volume in last 7 days vs previous 30
+    df["date"] = df["transacted_at"].dt.date
+    last_7 = df[df["transacted_at"] >= df["transacted_at"].max() - pd.Timedelta(days=7)]
+    prev_30 = df[df["transacted_at"] < df["transacted_at"].max() - pd.Timedelta(days=7)]
+
+    last_7_daily_avg = len(last_7) / 7
+    prev_30_daily_avg = len(prev_30) / 30 if len(prev_30) > 0 else 0
+
+    if prev_30_daily_avg > 0 and last_7_daily_avg > prev_30_daily_avg * 3:
+        flags.append({
+            "type": "velocity_anomaly",
+            "severity": "high",
+            "detail": f"Transaction volume spiked {round(last_7_daily_avg / prev_30_daily_avg, 1)}x in last 7 days",
+            "code": "VELOCITY_001"
+        })
+        risk_score += 35
+
+    # ── 2. Circular transaction detection ────────────────────────────────────
+    # Same counterparty appears as both sender and receiver
+    incoming_phones = set(df[df["type"] == "incoming"]["counterparty_phone"].dropna())
+    outgoing_phones = set(df[df["type"].isin(["outgoing", "withdrawal"])]["counterparty_phone"].dropna())
+    circular = incoming_phones.intersection(outgoing_phones)
+
+    if circular:
+        for phone in circular:
+            in_total = df[(df["type"] == "incoming") & (df["counterparty_phone"] == phone)]["amount"].sum()
+            out_total = df[(df["type"].isin(["outgoing", "withdrawal"])) & (df["counterparty_phone"] == phone)]["amount"].sum()
+            ratio = min(in_total, out_total) / max(in_total, out_total) if max(in_total, out_total) > 0 else 0
+            if ratio > 0.8:  # nearly equal in/out with same party
+                flags.append({
+                    "type": "circular_transaction",
+                    "severity": "medium",
+                    "detail": f"Circular flow detected with {phone} — {round(ratio * 100)}% symmetry",
+                    "code": "CIRCULAR_001"
+                })
+                risk_score += 25
+
+    # ── 3. Isolation Forest anomaly detection ────────────────────────────────
+    if len(df) >= 20:
+        features = df[["amount"]].copy()
+        features["hour"] = df["transacted_at"].dt.hour
+        features["dow"] = df["transacted_at"].dt.dayofweek
+
+        iso = IsolationForest(contamination=0.05, random_state=42)
+        df["anomaly"] = iso.fit_predict(features)
+        anomalies = df[df["anomaly"] == -1]
+
+        if len(anomalies) > 0:
+            max_anomaly = anomalies.nlargest(1, "amount").iloc[0]
+            flags.append({
+                "type": "statistical_anomaly",
+                "severity": "low",
+                "detail": f"{len(anomalies)} statistically unusual transactions detected. Largest: TZS {float(max_anomaly['amount']):,.0f}",
+                "code": "ANOMALY_001"
+            })
+            risk_score += 10
+
+    # ── 4. Round-number clustering ───────────────────────────────────────────
+    # Synthetic transactions often use round numbers
+    round_numbers = df[df["amount"] % 1000 == 0]
+    round_ratio = len(round_numbers) / len(df)
+    if round_ratio > 0.8 and len(df) > 10:
+        flags.append({
+            "type": "round_number_clustering",
+            "severity": "low",
+            "detail": f"{round(round_ratio * 100)}% of transactions are round numbers — may indicate synthetic data",
+            "code": "ROUND_001"
+        })
+        risk_score += 15
+
+    # ── 5. Single-day burst ──────────────────────────────────────────────────
+    daily_counts = df.groupby("date").size()
+    max_day_count = daily_counts.max()
+    avg_day_count = daily_counts.mean()
+
+    if max_day_count > avg_day_count * 5 and max_day_count > 10:
+        burst_date = daily_counts.idxmax()
+        flags.append({
+            "type": "single_day_burst",
+            "severity": "medium",
+            "detail": f"{max_day_count} transactions on {burst_date} — {round(max_day_count / avg_day_count, 1)}x above average",
+            "code": "BURST_001"
+        })
+        risk_score += 20
+
+    # Final risk level
+    risk_score = min(risk_score, 100)
+    if risk_score >= 60:
+        risk_level = "high"
+    elif risk_score >= 30:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    return {
+        "business_id": business_id,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "flags": flags,
+        "total_transactions_analysed": len(df),
+        "analysed_at": datetime.utcnow().isoformat(),
+        "model_version": MODEL_VERSION,
+    }
+
+
+@app.get("/pre-approvals")
+def get_pre_approvals(min_score: int = 500, limit: int = 20):
+    """Return ranked list of businesses meeting minimum credit score threshold."""
+    query = text("""
+        SELECT DISTINCT ON (b.id)
+            b.id as business_id,
+            b.name as business_name,
+            b.type as business_type,
+            b.location,
+            u.phone,
+            cs.score,
+            cs.grade,
+            cs.repayment_likelihood,
+            cs.calculated_at
+        FROM businesses b
+        JOIN users u ON u.id = b.user_id
+        JOIN credit_scores cs ON cs.business_id = b.id
+        WHERE cs.score >= :min_score
+          AND b.status = 'active'
+        ORDER BY b.id, cs.calculated_at DESC
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(query, {"min_score": min_score})
+        rows = result.fetchall()
+
+    if not rows:
+        return {
+            "total": 0,
+            "min_score_threshold": min_score,
+            "leads": [],
+            "generated_at": datetime.utcnow().isoformat(),
+        }
+
+    leads = []
+    for row in rows:
+        business_id = row[0]
+
+        # Get transaction summary for each lead
+        tx_query = text("""
+            SELECT
+                COUNT(*) as tx_count,
+                SUM(CASE WHEN type = 'incoming' THEN amount ELSE 0 END) as total_incoming,
+                MAX(transacted_at) as last_tx
+            FROM transactions
+            WHERE business_id = :business_id
+        """)
+        with engine.connect() as conn:
+            tx = conn.execute(tx_query, {"business_id": business_id}).fetchone()
+
+        leads.append({
+            "business_id": row[0],
+            "business_name": row[1],
+            "business_type": row[2],
+            "location": row[3],
+            "phone": row[4],
+            "credit_score": row[5],
+            "grade": row[6],
+            "repayment_likelihood": float(row[7]),
+            "score_calculated_at": row[8].isoformat() if row[8] else None,
+            "transaction_count": int(tx[0]) if tx else 0,
+            "total_incoming_tzs": float(tx[1]) if tx and tx[1] else 0,
+            "last_transaction_at": tx[2].isoformat() if tx and tx[2] else None,
+            "recommended_max_loan_tzs": round(float(tx[1]) * 0.3) if tx and tx[1] else 0,
+        })
+
+    # Sort by score descending
+    leads.sort(key=lambda x: x["credit_score"], reverse=True)
+
+    return {
+        "total": len(leads),
+        "min_score_threshold": min_score,
+        "leads": leads[:limit],
+        "generated_at": datetime.utcnow().isoformat(),
     }

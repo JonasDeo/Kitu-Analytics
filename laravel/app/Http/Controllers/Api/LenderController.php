@@ -262,4 +262,40 @@ class LenderController extends Controller
 
         return response()->json($response->json());
     }
+
+    public function getPreApprovals(Request $request)
+    {
+        $lender = $this->authenticateLender($request);
+
+        $minScore = $request->query('min_score', $lender->min_credit_score);
+        $limit = $request->query('limit', 20);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(20)->get("{$mlServiceUrl}/pre-approvals", [
+            'min_score' => $minScore,
+            'limit' => $limit,
+        ]);
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Pre-approval engine unavailable.'], 502);
+        }
+
+        // Bill lender for pre-approval batch
+        if ($response->json('total') > 0) {
+            RevenueEvent::create([
+                'lender_id' => $lender->id,
+                'event_type' => 'pre_approval_batch',
+                'reference' => 'PRE-' . strtoupper(Str::random(10)),
+                'amount_tzs' => $response->json('total') * 2500,
+                'status' => 'billed',
+                'billed_at' => now(),
+                'metadata' => [
+                    'total_leads' => $response->json('total'),
+                    'min_score' => $minScore,
+                ],
+            ]);
+        }
+
+        return response()->json($response->json());
+    }
 }

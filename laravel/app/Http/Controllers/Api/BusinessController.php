@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Http;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use Illuminate\Http\Request;
+use App\Models\AuditLog;
 
 class BusinessController extends Controller
 {
@@ -116,5 +117,29 @@ class BusinessController extends Controller
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => "attachment; filename=kitu_credit_report_{$business->id}.pdf",
         ]);
+    }
+
+    public function fraudCheck(Request $request, Business $business)
+    {
+        $this->authorize('view', $business);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(15)->get("{$mlServiceUrl}/fraud/{$business->id}");
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Fraud check unavailable.'], 502);
+        }
+
+        // Log fraud check in audit trail
+        AuditLog::create([
+            'event' => 'fraud.check_performed',
+            'auditable_type' => 'Business',
+            'auditable_id' => $business->id,
+            'user_id' => $request->user()->id,
+            'new_values' => $response->json(),
+            'ip_address' => $request->ip(),
+        ]);
+
+        return response()->json($response->json());
     }
 }
