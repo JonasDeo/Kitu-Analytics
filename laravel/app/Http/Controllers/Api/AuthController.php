@@ -26,16 +26,19 @@ class AuthController extends Controller
             'role' => 'business_owner',
         ]);
 
-        // Generate OTP (in production send via Africa's Talking SMS)
         $otp = rand(100000, 999999);
         Cache::put("otp:{$user->phone}", $otp, now()->addMinutes(10));
 
-        // TODO: Send OTP via Africa's Talking SMS gateway
-        // For now return OTP in response (development only)
+        // Send real SMS via Africa's Talking
+        $smsService = new \App\Services\SmsService();
+        $smsSent = $smsService->sendOtp($user->phone, $otp);
+
         return response()->json([
-            'message' => 'Registration successful. Verify your phone.',
+            'message' => 'Usajili umefanikiwa. Thibitisha simu yako.',
             'user_id' => $user->id,
-            'otp' => app()->environment('local') ? $otp : null,
+            // Only return OTP in local/sandbox env as fallback
+            'otp' => (app()->environment('local') || !$smsSent) ? $otp : null,
+            'sms_sent' => $smsSent,
         ], 201);
     }
 

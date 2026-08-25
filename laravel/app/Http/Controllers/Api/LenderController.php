@@ -296,6 +296,25 @@ class LenderController extends Controller
             ]);
         }
 
+        // Send SMS to each pre-approved business
+        if ($response->json('total') > 0 && $request->query('notify', false)) {
+            $smsService = new \App\Services\SmsService();
+            $notified = 0;
+            foreach ($response->json('leads') as $lead) {
+                $sent = $smsService->sendPreApprovalOffer(
+                    $lead['phone'],
+                    $lead['business_name'],
+                    (int) $lead['recommended_max_loan_tzs'],
+                    $lender->name
+                );
+                if ($sent) $notified++;
+            }
+            // Add to response
+            return response()->json(array_merge($response->json(), [
+                'sms_notifications_sent' => $notified,
+            ]));
+        }
+
         return response()->json($response->json());
     }
 }
