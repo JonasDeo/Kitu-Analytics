@@ -65,4 +65,12 @@ class Business extends Model
     {
         return $this->hasMany(GuarantorRelationship::class, 'beneficiary_business_id');
     }
+
+    public function branches() { return $this->hasMany(Branch::class); }
+    public function mainBranch() { return $this->hasOne(Branch::class)->where('is_main', true); }
+    public function products() { return $this->hasMany(Product::class); }
+    public function sales() { return $this->hasMany(Sale::class); }
+    public function customers() { return $this->hasMany(Customer::class); }
+    public function suppliers() { return $this->hasMany(Supplier::class); }
+    public function bkExpenses() { return $this->hasMany(BkExpense::class); }
 }
