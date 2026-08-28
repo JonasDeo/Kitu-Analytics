@@ -82,6 +82,8 @@ Route::prefix('v1')->group(function () {
         // Fraud Detection
         Route::get('/businesses/{business}/fraud', [BusinessController::class, 'fraudCheck']);
 
+        Route::post('/businesses/{business}/credit-score/enhanced', [CreditScoreController::class, 'enhanced']);
+
         // ── Bookkeeping Module ────────────────────────────────────────────────────
         Route::prefix('bk')->group(function () {
 

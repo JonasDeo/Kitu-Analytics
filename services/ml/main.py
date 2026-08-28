@@ -954,3 +954,191 @@ def model_status():
         "model_version": MODEL_VERSION,
         "checked_at": datetime.utcnow().isoformat(),
     }
+
+@app.get("/score-bookkeeping/{business_id}")
+def score_with_bookkeeping(business_id: int):
+    """
+    Enhanced credit score combining M-Pesa transactions
+    with structured bookkeeping data for stronger signal.
+    """
+    # ── Load M-Pesa transaction features ─────────────────────────────────────
+    try:
+        df = load_transactions(business_id)
+        mpesa_factors = engineer_features(df)
+        has_mpesa = True
+    except HTTPException:
+        mpesa_factors = None
+        has_mpesa = False
+
+    # ── Load bookkeeping data from PostgreSQL ─────────────────────────────────
+    sales_query = text("""
+        SELECT
+            COUNT(*) as total_sales,
+            SUM(total_amount) as total_revenue,
+            SUM(amount_paid) as total_collected,
+            SUM(balance_owed) as total_outstanding,
+            COUNT(CASE WHEN is_partial THEN 1 END) as partial_sales,
+            AVG(total_amount) as avg_sale_value,
+            MAX(sold_at) as last_sale_at,
+            MIN(sold_at) as first_sale_at
+        FROM sales
+        WHERE business_id = :business_id
+          AND status != 'cancelled'
+    """)
+
+    expenses_query = text("""
+        SELECT
+            COUNT(*) as expense_count,
+            SUM(amount) as total_expenses
+        FROM bk_expenses
+        WHERE business_id = :business_id
+    """)
+
+    customers_query = text("""
+        SELECT
+            COUNT(DISTINCT customer_id) as unique_customers,
+            SUM(net_balance) as total_customer_debt
+        FROM customer_balances
+        WHERE business_id = :business_id
+    """)
+
+    products_query = text("""
+        SELECT
+            COUNT(*) as product_count,
+            AVG((sale_price - cost_price) / NULLIF(sale_price, 0) * 100) as avg_margin
+        FROM products
+        WHERE business_id = :business_id AND is_active = true
+    """)
+
+    with engine.connect() as conn:
+        sales = conn.execute(sales_query, {"business_id": business_id}).fetchone()
+        expenses = conn.execute(expenses_query, {"business_id": business_id}).fetchone()
+        customers = conn.execute(customers_query, {"business_id": business_id}).fetchone()
+        products = conn.execute(products_query, {"business_id": business_id}).fetchone()
+
+    has_bookkeeping = sales and sales[0] > 0
+
+    if not has_mpesa and not has_bookkeeping:
+        raise HTTPException(status_code=404, detail="No data found for this business")
+
+    # ── Bookkeeping feature scores ────────────────────────────────────────────
+    bk_factors = {}
+
+    if has_bookkeeping:
+        total_revenue = float(sales[1] or 0)
+        total_collected = float(sales[2] or 0)
+        total_outstanding = float(sales[3] or 0)
+        total_sales = int(sales[0])
+        avg_sale_value = float(sales[5] or 0)
+
+        # Collection rate — how much of what's owed actually gets collected
+        collection_rate = (total_collected / total_revenue * 100) if total_revenue > 0 else 0
+        collection_score = min(collection_rate, 100)
+
+        # Debt ratio — outstanding vs total revenue
+        debt_ratio = (total_outstanding / total_revenue) if total_revenue > 0 else 1
+        debt_score = max(0, 100 - (debt_ratio * 100))
+
+        # Sales consistency — average daily sales
+        if sales[6] and sales[7]:
+            days_active = max((sales[6] - sales[7]).days, 1)
+            daily_sales_rate = total_sales / days_active
+            sales_consistency_score = min(daily_sales_rate * 20, 100)
+        else:
+            sales_consistency_score = 0
+
+        # Profit margin score
+        avg_margin = float(products[1] or 0) if products else 0
+        margin_score = min(avg_margin * 2, 100)
+
+        # Expense discipline — expenses vs revenue ratio
+        total_expenses = float(expenses[1] or 0) if expenses else 0
+        expense_ratio = (total_expenses / total_collected) if total_collected > 0 else 1
+        expense_discipline_score = max(0, 100 - (expense_ratio * 100))
+
+        # Customer base diversity
+        unique_customers = int(customers[0] or 0) if customers else 0
+        customer_diversity_score = min((unique_customers / 10) * 100, 100)
+
+        bk_factors = {
+            "collection_rate_score": round(collection_score, 2),
+            "debt_ratio_score": round(debt_score, 2),
+            "sales_consistency_score": round(sales_consistency_score, 2),
+            "margin_score": round(margin_score, 2),
+            "expense_discipline_score": round(expense_discipline_score, 2),
+            "customer_diversity_score": round(customer_diversity_score, 2),
+            "total_revenue_tzs": total_revenue,
+            "total_collected_tzs": total_collected,
+            "total_outstanding_tzs": total_outstanding,
+            "avg_sale_value_tzs": avg_sale_value,
+            "unique_customers": unique_customers,
+            "avg_profit_margin_pct": round(avg_margin, 2),
+        }
+
+    # ── Combine scores ────────────────────────────────────────────────────────
+    if has_mpesa and has_bookkeeping:
+        # Both data sources — strongest signal
+        data_quality = "high"
+        repayment_likelihood = round(
+            # M-Pesa signals (40%)
+            (mpesa_factors["transaction_frequency_score"] * 0.10)
+            + (mpesa_factors["cash_flow_stability_score"] * 0.10)
+            + (mpesa_factors["network_health_score"] * 0.08)
+            + (mpesa_factors["seasonal_alignment_score"] * 0.07)
+            + (mpesa_factors["trend_score"] * 0.05)
+            # Bookkeeping signals (60%)
+            + (bk_factors["collection_rate_score"] * 0.15)
+            + (bk_factors["debt_ratio_score"] * 0.12)
+            + (bk_factors["sales_consistency_score"] * 0.10)
+            + (bk_factors["margin_score"] * 0.08)
+            + (bk_factors["expense_discipline_score"] * 0.08)
+            + (bk_factors["customer_diversity_score"] * 0.07),
+            2
+        )
+    elif has_bookkeeping:
+        # Bookkeeping only
+        data_quality = "medium"
+        repayment_likelihood = round(
+            (bk_factors["collection_rate_score"] * 0.25)
+            + (bk_factors["debt_ratio_score"] * 0.20)
+            + (bk_factors["sales_consistency_score"] * 0.20)
+            + (bk_factors["margin_score"] * 0.15)
+            + (bk_factors["expense_discipline_score"] * 0.10)
+            + (bk_factors["customer_diversity_score"] * 0.10),
+            2
+        )
+    else:
+        # M-Pesa only (original scoring)
+        data_quality = "standard"
+        repayment_likelihood = mpesa_factors["repayment_likelihood"]
+
+    final_score = int(min(max(repayment_likelihood * 10, 0), 1000))
+    grade = (
+        "A" if final_score >= 800 else
+        "B" if final_score >= 650 else
+        "C" if final_score >= 500 else
+        "D" if final_score >= 350 else "F"
+    )
+
+    return {
+        "business_id": business_id,
+        "score": final_score,
+        "grade": grade,
+        "data_quality": data_quality,
+        "model_version": MODEL_VERSION,
+        "calculated_at": datetime.utcnow().isoformat(),
+        "data_sources": {
+            "mpesa_transactions": has_mpesa,
+            "bookkeeping_records": has_bookkeeping,
+        },
+        "mpesa_factors": mpesa_factors,
+        "bookkeeping_factors": bk_factors if has_bookkeeping else None,
+        "repayment_likelihood": repayment_likelihood,
+        "score_improvement_tip": (
+            "Add bookkeeping records to improve your score accuracy."
+            if not has_bookkeeping else
+            "Your score uses both M-Pesa and bookkeeping data — highest accuracy."
+            if has_mpesa else
+            "Add M-Pesa transaction history to further strengthen your score."
+        ),
+    }

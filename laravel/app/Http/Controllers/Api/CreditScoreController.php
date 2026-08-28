@@ -131,4 +131,36 @@ class CreditScoreController extends Controller
             ]);
         }
     }
+
+    public function enhanced(Request $request, Business $business)
+    {
+        $this->authorize('view', $business);
+
+        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $response = Http::timeout(15)->get("{$mlServiceUrl}/score-bookkeeping/{$business->id}");
+
+        if ($response->failed()) {
+            return response()->json(['message' => 'Enhanced scoring unavailable.'], 502);
+        }
+
+        $data = $response->json();
+
+        // Store enhanced score
+        $creditScore = CreditScore::create([
+            'business_id' => $business->id,
+            'score' => $data['score'],
+            'grade' => $data['grade'],
+            'transaction_frequency_score' => $data['mpesa_factors']['transaction_frequency_score'] ?? null,
+            'cash_flow_stability_score' => $data['mpesa_factors']['cash_flow_stability_score'] ?? null,
+            'network_health_score' => $data['mpesa_factors']['network_health_score'] ?? null,
+            'repayment_likelihood' => $data['repayment_likelihood'],
+            'factors' => $data,
+            'calculated_at' => now(),
+        ]);
+
+        return response()->json([
+            'credit_score' => $creditScore,
+            'enhanced_data' => $data,
+        ], 201);
+    }
 }
