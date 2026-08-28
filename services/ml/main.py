@@ -10,6 +10,9 @@ import shap
 import io
 import os
 import json
+import joblib
+import threading
+from pathlib import Path
 from datetime import datetime, timedelta
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.ensemble import IsolationForest
@@ -23,6 +26,80 @@ app = FastAPI(title="Kitu ML Service", version="2.0.0")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
+
+# ── Model registry (trained offline, served from memory) ─────────────────────
+MODEL_CACHE_DIR = Path("/app/model_cache")
+MODEL_CACHE_DIR.mkdir(exist_ok=True)
+
+_forecast_models = {}  # business_id → trained model
+_model_lock = threading.Lock()
+
+def get_or_train_forecast_model(business_id: int, df: pd.DataFrame):
+    """Return cached model or train a new one. Thread-safe."""
+    cache_path = MODEL_CACHE_DIR / f"forecast_{business_id}.joblib"
+
+    with _model_lock:
+        # Return in-memory cached model
+        if business_id in _forecast_models:
+            return _forecast_models[business_id]
+
+        # Load from disk if exists and is fresh (< 24h old)
+        if cache_path.exists():
+            age_hours = (datetime.utcnow().timestamp() - cache_path.stat().st_mtime) / 3600
+            if age_hours < 24:
+                model = joblib.load(cache_path)
+                _forecast_models[business_id] = model
+                return model
+
+        # Train fresh model
+        model = _train_forecast_model(df)
+        joblib.dump(model, cache_path)
+        _forecast_models[business_id] = model
+        return model
+
+
+def _train_forecast_model(df: pd.DataFrame) -> GradientBoostingRegressor:
+    """Train and return a forecast model from transaction history."""
+    df = df.copy()
+    df["date"] = df["transacted_at"].dt.date
+    daily = df.groupby("date").apply(
+        lambda x: x.loc[x["type"] == "incoming", "amount"].sum()
+        - x.loc[x["type"].isin(["outgoing", "withdrawal"]), "amount"].sum()
+    ).reset_index()
+    daily.columns = ["date", "net_flow"]
+    daily["date"] = pd.to_datetime(daily["date"])
+    daily = daily.sort_values("date")
+
+    daily["dow"] = daily["date"].dt.dayofweek
+    daily["dom"] = daily["date"].dt.day
+    daily["seasonal"] = daily["date"].apply(get_seasonal_multiplier)
+    daily["rolling_7"] = daily["net_flow"].rolling(7, min_periods=1).mean()
+    daily["rolling_30"] = daily["net_flow"].rolling(30, min_periods=1).mean()
+
+    X = daily[["dow", "dom", "seasonal", "rolling_7", "rolling_30"]].values
+    y = daily["net_flow"].values
+
+    model = GradientBoostingRegressor(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    return model
+
+
+@app.post("/train/{business_id}")
+def trigger_training(business_id: int):
+    """Force retrain the forecast model for a business."""
+    df = load_transactions(business_id)
+    cache_path = MODEL_CACHE_DIR / f"forecast_{business_id}.joblib"
+
+    with _model_lock:
+        model = _train_forecast_model(df)
+        joblib.dump(cache_path.__str__(), cache_path)
+        _forecast_models[business_id] = model
+
+    return {
+        "message": f"Model retrained for business {business_id}",
+        "training_samples": len(df),
+        "cached_at": datetime.utcnow().isoformat(),
+    }
 
 MODEL_VERSION = "v0.2-seasonal-network-shap"
 
@@ -75,11 +152,11 @@ def engineer_features(df: pd.DataFrame) -> dict:
     total_days = max((df["transacted_at"].max() - df["transacted_at"].min()).days, 1)
     active_days = df["transacted_at"].dt.date.nunique()
 
-    # Frequency
+    # ── 1. Transaction frequency ──────────────────────────────────────────────
     frequency_ratio = active_days / total_days
     transaction_frequency_score = min(frequency_ratio * 100, 100)
 
-    # Cash flow stability
+    # ── 2. Cash flow stability ────────────────────────────────────────────────
     daily_net = df.groupby(df["transacted_at"].dt.date).apply(
         lambda x: x.loc[x["type"] == "incoming", "amount"].sum()
         - x.loc[x["type"].isin(["outgoing", "withdrawal"]), "amount"].sum()
@@ -89,27 +166,50 @@ def engineer_features(df: pd.DataFrame) -> dict:
     cv = volatility / abs(mean_flow)
     cash_flow_stability_score = max(0, 100 - min(cv * 50, 100))
 
-    # Seasonal alignment score
+    # ── 3. Rolling averages (7-day vs 30-day trend) ───────────────────────────
+    daily_income = incoming.groupby(incoming["transacted_at"].dt.date)["amount"].sum()
+    daily_income.index = pd.to_datetime(daily_income.index)
+    daily_income = daily_income.sort_index()
+
+    rolling_7 = float(daily_income.tail(7).mean()) if len(daily_income) >= 7 else float(daily_income.mean())
+    rolling_30 = float(daily_income.tail(30).mean()) if len(daily_income) >= 30 else float(daily_income.mean())
+
+    # Trend: is recent income above or below the 30-day average?
+    trend_ratio = rolling_7 / rolling_30 if rolling_30 > 0 else 1.0
+    trend_score = min(trend_ratio * 50, 100)  # 100 = recent income 2x the 30-day avg
+
+    # ── 4. Amount trend over time (linear regression slope) ──────────────────
+    if len(daily_income) >= 7:
+        x = np.arange(len(daily_income))
+        y = daily_income.values
+        slope = float(np.polyfit(x, y, 1)[0])
+        # Normalize slope: positive slope = growing business
+        amount_trend_score = min(max(50 + (slope / rolling_30 * 100), 0), 100) if rolling_30 > 0 else 50
+    else:
+        amount_trend_score = 50
+
+    # ── 5. Seasonal alignment ─────────────────────────────────────────────────
     df["seasonal_multiplier"] = df["transacted_at"].apply(get_seasonal_multiplier)
     seasonal_alignment = df["seasonal_multiplier"].mean()
-    seasonal_score = min((seasonal_alignment - 1.0) * 200, 100)
-    seasonal_score = max(seasonal_score, 0)
+    seasonal_score = min(max((seasonal_alignment - 1.0) * 200, 0), 100)
 
-    # Totals
+    # ── 6. Network health ─────────────────────────────────────────────────────
+    unique_counterparties = df["counterparty_phone"].nunique()
+    network_health_score = min((unique_counterparties / 10) * 100, 100)
+
+    # ── 7. Totals ─────────────────────────────────────────────────────────────
     total_incoming = incoming["amount"].sum()
     total_outgoing = outgoing["amount"].sum()
     net_position = total_incoming - total_outgoing
 
-    # Unique counterparties (network proxy)
-    unique_counterparties = df["counterparty_phone"].nunique()
-    network_health_score = min((unique_counterparties / 10) * 100, 100)
-
-    # Repayment likelihood
+    # ── 8. Repayment likelihood (now includes trend signals) ──────────────────
     repayment_likelihood = round(
-        (transaction_frequency_score * 0.30)
-        + (cash_flow_stability_score * 0.35)
-        + (network_health_score * 0.20)
-        + (seasonal_score * 0.15),
+        (transaction_frequency_score * 0.25)
+        + (cash_flow_stability_score * 0.30)
+        + (network_health_score * 0.15)
+        + (seasonal_score * 0.10)
+        + (trend_score * 0.10)
+        + (amount_trend_score * 0.10),
         2
     )
 
@@ -118,6 +218,10 @@ def engineer_features(df: pd.DataFrame) -> dict:
         "cash_flow_stability_score": round(cash_flow_stability_score, 2),
         "network_health_score": round(network_health_score, 2),
         "seasonal_alignment_score": round(seasonal_score, 2),
+        "trend_score": round(trend_score, 2),
+        "amount_trend_score": round(amount_trend_score, 2),
+        "rolling_7_day_avg": round(rolling_7, 2),
+        "rolling_30_day_avg": round(rolling_30, 2),
         "repayment_likelihood": repayment_likelihood,
         "total_transactions": len(df),
         "active_days": int(active_days),
@@ -127,7 +231,6 @@ def engineer_features(df: pd.DataFrame) -> dict:
         "net_position": float(net_position),
         "unique_counterparties": int(unique_counterparties),
     }
-
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -146,20 +249,43 @@ def calculate_score(business_id: int):
     df = load_transactions(business_id)
     factors = engineer_features(df)
 
-    # SHAP-style feature importance (linear approximation)
-    feature_weights = {
-        "transaction_frequency_score": 0.30,
-        "cash_flow_stability_score": 0.35,
-        "network_health_score": 0.20,
-        "seasonal_alignment_score": 0.15,
-    }
-    shap_values = {
-        k: round((factors[k] / 100) * v * 1000, 2)
-        for k, v in feature_weights.items()
+    # ── Real SHAP explainability ──────────────────────────────────────────────
+    # Build a small training set from feature history
+    feature_names = [
+        "transaction_frequency_score",
+        "cash_flow_stability_score",
+        "network_health_score",
+        "seasonal_alignment_score",
+    ]
+    feature_weights = np.array([0.30, 0.35, 0.20, 0.15])
+    feature_values = np.array([[factors[f] for f in feature_names]])
+
+    # Train a linear explainer on a synthetic population
+    # (In production this would be trained on the full user population)
+    np.random.seed(42)
+    n_samples = 200
+    synthetic_X = np.random.uniform(0, 100, (n_samples, len(feature_names)))
+    synthetic_y = synthetic_X @ feature_weights
+
+    from sklearn.linear_model import LinearRegression
+    surrogate = LinearRegression()
+    surrogate.fit(synthetic_X, synthetic_y)
+
+    explainer = shap.LinearExplainer(surrogate, synthetic_X)
+    shap_values = explainer.shap_values(feature_values)[0]
+
+    shap_explanation = {
+        name: {
+            "value": round(float(factors[name]), 2),
+            "shap_contribution": round(float(shap_values[i]), 4),
+            "direction": "positive" if shap_values[i] > 0 else "negative",
+            "weight": float(feature_weights[i]),
+        }
+        for i, name in enumerate(feature_names)
     }
 
+    # Score calculation
     final_score = int(min(max(factors["repayment_likelihood"] * 10, 0), 1000))
-
     grade = (
         "A" if final_score >= 800 else
         "B" if final_score >= 650 else
@@ -174,9 +300,8 @@ def calculate_score(business_id: int):
         "model_version": MODEL_VERSION,
         "calculated_at": datetime.utcnow().isoformat(),
         "factors": factors,
-        "shap_values": shap_values,
+        "shap_explanation": shap_explanation,
     }
-
 
 @app.get("/network/{business_id}")
 def analyse_network(business_id: int):
@@ -234,40 +359,41 @@ def analyse_network(business_id: int):
 
 @app.get("/forecast/{business_id}")
 def forecast_cash_flow(business_id: int):
-    """Predict next 14 days of cash flow using trend + seasonal adjustment."""
+    """Predict next 14 days using cached trained model."""
     df = load_transactions(business_id)
 
-    # Build daily cash flow series
-    df["date"] = df["transacted_at"].dt.date
-    daily = df.groupby("date").apply(
-        lambda x: x.loc[x["type"] == "incoming", "amount"].sum()
-        - x.loc[x["type"].isin(["outgoing", "withdrawal"]), "amount"].sum()
-    ).reset_index()
-    daily.columns = ["date", "net_flow"]
-    daily["date"] = pd.to_datetime(daily["date"])
-    daily = daily.sort_values("date")
-
-    if len(daily) < 7:
+    if len(df) < 7:
         raise HTTPException(status_code=422, detail="Need at least 7 days of data to forecast")
 
-    # Simple feature: day of week + day of month + seasonal multiplier
-    daily["dow"] = daily["date"].dt.dayofweek
-    daily["dom"] = daily["date"].dt.day
-    daily["seasonal"] = daily["date"].apply(get_seasonal_multiplier)
+    # Get or train cached model
+    model = get_or_train_forecast_model(business_id, df)
 
-    X = daily[["dow", "dom", "seasonal"]].values
-    y = daily["net_flow"].values
+    # Build forecast features
+    last_date = df["transacted_at"].dt.date.max()
+    last_date = pd.Timestamp(last_date)
 
-    model = GradientBoostingRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
+    # Compute rolling averages from historical data for seeding
+    df_daily = df.copy()
+    df_daily["date"] = df_daily["transacted_at"].dt.date
+    daily_net = df_daily.groupby("date").apply(
+        lambda x: x.loc[x["type"] == "incoming", "amount"].sum()
+        - x.loc[x["type"].isin(["outgoing", "withdrawal"]), "amount"].sum()
+    )
+    rolling_7 = float(daily_net.tail(7).mean())
+    rolling_30 = float(daily_net.tail(30).mean())
 
-    # Forecast next 14 days
-    last_date = daily["date"].max()
     forecast_dates = [last_date + timedelta(days=i+1) for i in range(14)]
     forecast_features = np.array([
-        [d.dayofweek, d.day, get_seasonal_multiplier(pd.Timestamp(d))]
+        [
+            d.dayofweek,
+            d.day,
+            get_seasonal_multiplier(pd.Timestamp(d)),
+            rolling_7,
+            rolling_30,
+        ]
         for d in forecast_dates
     ])
+
     predictions = model.predict(forecast_features)
 
     forecast = [
@@ -280,7 +406,6 @@ def forecast_cash_flow(business_id: int):
     ]
 
     total_predicted = sum(f["predicted_net_flow"] for f in forecast)
-    avg_daily = total_predicted / 14
 
     return {
         "business_id": business_id,
@@ -288,13 +413,13 @@ def forecast_cash_flow(business_id: int):
         "forecast": forecast,
         "summary": {
             "total_predicted_net_flow": round(total_predicted, 2),
-            "average_daily_flow": round(avg_daily, 2),
+            "average_daily_flow": round(total_predicted / 14, 2),
             "outlook": "positive" if total_predicted > 0 else "negative",
         },
         "model_version": MODEL_VERSION,
+        "model_cached": True,
         "generated_at": datetime.utcnow().isoformat(),
     }
-
 
 @app.post("/repayment-outcome")
 def record_repayment_outcome(payload: dict):
@@ -706,4 +831,126 @@ def get_pre_approvals(min_score: int = 500, limit: int = 20):
         "min_score_threshold": min_score,
         "leads": leads[:limit],
         "generated_at": datetime.utcnow().isoformat(),
+    }
+
+# ── Repayment outcome model ───────────────────────────────────────────────────
+REPAYMENT_MODEL_PATH = MODEL_CACHE_DIR / "repayment_model.joblib"
+_repayment_model = None
+
+def load_repayment_outcomes() -> pd.DataFrame:
+    """Load all repayment outcomes from audit log."""
+    query = text("""
+        SELECT
+            auditable_id as business_id,
+            new_values,
+            created_at
+        FROM audit_logs
+        WHERE event = 'repayment.outcome_posted'
+        ORDER BY created_at ASC
+    """)
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        rows = result.fetchall()
+
+    if not rows:
+        return pd.DataFrame()
+
+    records = []
+    for row in rows:
+        try:
+            values = eval(str(row[1]))
+            records.append({
+                "business_id": row[0],
+                "outcome": values.get("outcome"),
+                "loan_amount": float(values.get("loan_amount", 0)),
+                "created_at": row[2],
+            })
+        except Exception:
+            continue
+
+    return pd.DataFrame(records)
+
+
+@app.post("/train-repayment-model")
+def train_repayment_model():
+    """Train a real repayment prediction model from accumulated outcomes."""
+    global _repayment_model
+
+    outcomes = load_repayment_outcomes()
+
+    if len(outcomes) < 10:
+        return {
+            "message": f"Need at least 10 repayment outcomes to train. Have {len(outcomes)}.",
+            "outcomes_available": len(outcomes),
+            "status": "insufficient_data",
+        }
+
+    # Build feature matrix
+    feature_rows = []
+    labels = []
+
+    for _, outcome in outcomes.iterrows():
+        try:
+            df = load_transactions(int(outcome["business_id"]))
+            factors = engineer_features(df)
+            feature_rows.append([
+                factors["transaction_frequency_score"],
+                factors["cash_flow_stability_score"],
+                factors["network_health_score"],
+                factors["seasonal_alignment_score"],
+                factors["trend_score"],
+                factors["amount_trend_score"],
+            ])
+            # Binary label: 1 = on_time, 0 = late/default
+            labels.append(1 if outcome["outcome"] == "on_time" else 0)
+        except Exception:
+            continue
+
+    if len(feature_rows) < 10:
+        return {"message": "Not enough valid feature rows.", "status": "insufficient_data"}
+
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.model_selection import cross_val_score
+
+    X = np.array(feature_rows)
+    y = np.array(labels)
+
+    model = GradientBoostingClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+
+    # Cross-validate
+    if len(X) >= 5:
+        cv_scores = cross_val_score(model, X, y, cv=min(5, len(X)), scoring='accuracy')
+        accuracy = float(cv_scores.mean())
+    else:
+        accuracy = float(model.score(X, y))
+
+    joblib.dump(model, REPAYMENT_MODEL_PATH)
+    _repayment_model = model
+
+    return {
+        "message": "Repayment model trained successfully.",
+        "training_samples": len(X),
+        "accuracy": round(accuracy, 4),
+        "model_path": str(REPAYMENT_MODEL_PATH),
+        "trained_at": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/model-status")
+def model_status():
+    """Report on what models are trained and cached."""
+    forecast_models = list(MODEL_CACHE_DIR.glob("forecast_*.joblib"))
+    repayment_trained = REPAYMENT_MODEL_PATH.exists()
+
+    outcomes = load_repayment_outcomes()
+
+    return {
+        "forecast_models_cached": len(forecast_models),
+        "forecast_model_ids": [f.stem.replace("forecast_", "") for f in forecast_models],
+        "repayment_model_trained": repayment_trained,
+        "repayment_outcomes_collected": len(outcomes),
+        "repayment_outcomes_needed_to_train": max(0, 10 - len(outcomes)),
+        "model_version": MODEL_VERSION,
+        "checked_at": datetime.utcnow().isoformat(),
     }
