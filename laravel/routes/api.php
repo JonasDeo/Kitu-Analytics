@@ -81,6 +81,51 @@ Route::prefix('v1')->group(function () {
 
         // Fraud Detection
         Route::get('/businesses/{business}/fraud', [BusinessController::class, 'fraudCheck']);
+
+        // ── Bookkeeping Module ────────────────────────────────────────────────────
+        Route::prefix('bk')->group(function () {
+
+            // Branches
+            Route::get('/branches', [\App\Http\Controllers\Api\Bookkeeping\BranchController::class, 'index']);
+            Route::post('/branches', [\App\Http\Controllers\Api\Bookkeeping\BranchController::class, 'store']);
+            Route::put('/branches/{branch}', [\App\Http\Controllers\Api\Bookkeeping\BranchController::class, 'update']);
+
+            // Products
+            Route::get('/products', [\App\Http\Controllers\Api\Bookkeeping\ProductController::class, 'index']);
+            Route::post('/products', [\App\Http\Controllers\Api\Bookkeeping\ProductController::class, 'store']);
+            Route::put('/products/{product}', [\App\Http\Controllers\Api\Bookkeeping\ProductController::class, 'update']);
+            Route::delete('/products/{product}', [\App\Http\Controllers\Api\Bookkeeping\ProductController::class, 'destroy']);
+            Route::get('/products/{product}/stock', [\App\Http\Controllers\Api\Bookkeeping\ProductController::class, 'stock']);
+            Route::post('/products/{product}/restock', [\App\Http\Controllers\Api\Bookkeeping\ProductController::class, 'restock']);
+
+            // Sales — the core loop
+            Route::get('/sales', [\App\Http\Controllers\Api\Bookkeeping\SaleController::class, 'index']);
+            Route::post('/sales', [\App\Http\Controllers\Api\Bookkeeping\SaleController::class, 'store']);
+            Route::get('/sales/{sale}', [\App\Http\Controllers\Api\Bookkeeping\SaleController::class, 'show']);
+            Route::post('/sales/{sale}/pay', [\App\Http\Controllers\Api\Bookkeeping\SaleController::class, 'recordPayment']);
+
+            // Customers
+            Route::get('/customers', [\App\Http\Controllers\Api\Bookkeeping\CustomerController::class, 'index']);
+            Route::post('/customers', [\App\Http\Controllers\Api\Bookkeeping\CustomerController::class, 'store']);
+            Route::get('/customers/{customer}', [\App\Http\Controllers\Api\Bookkeeping\CustomerController::class, 'show']);
+            Route::post('/customers/{customer}/remind', [\App\Http\Controllers\Api\Bookkeeping\CustomerController::class, 'sendReminder']);
+
+            // Suppliers
+            Route::get('/suppliers', [\App\Http\Controllers\Api\Bookkeeping\SupplierController::class, 'index']);
+            Route::post('/suppliers', [\App\Http\Controllers\Api\Bookkeeping\SupplierController::class, 'store']);
+            Route::post('/suppliers/{supplier}/invoices', [\App\Http\Controllers\Api\Bookkeeping\SupplierController::class, 'addInvoice']);
+            Route::post('/suppliers/invoices/{invoice}/pay', [\App\Http\Controllers\Api\Bookkeeping\SupplierController::class, 'payInvoice']);
+
+            // Expenses
+            Route::get('/expenses', [\App\Http\Controllers\Api\Bookkeeping\ExpenseController::class, 'index']);
+            Route::post('/expenses', [\App\Http\Controllers\Api\Bookkeeping\ExpenseController::class, 'store']);
+
+            // Reports
+            Route::get('/reports/daily', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'daily']);
+            Route::get('/reports/summary', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'summary']);
+            Route::get('/reports/products', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'products']);
+            Route::get('/reports/debtors', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'debtors']);
+        });
     });
 
     /*
