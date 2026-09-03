@@ -46,3 +46,36 @@ export const submitAppeal = (businessId: number, reason: string) =>
 
 export const postRepaymentOutcome = (phone: string, loanAmount: number, outcome: string) =>
   client.post('/lender/repayment-outcome', { phone, loan_amount: loanAmount, outcome });
+
+export const getBookkeepingSales = (businessId: number) =>
+  client.get(`/bk/sales`);
+
+export const getBookkeepingDailyReport = () =>
+  client.get(`/bk/reports/daily`);
+
+export const getBookkeepingSummary = (days: number = 30) =>
+  client.get(`/bk/reports/summary?days=${days}`);
+
+export const getBookkeepingProducts = () =>
+  client.get(`/bk/reports/products`);
+
+export const getBookkeepingDebtors = () =>
+  client.get(`/bk/reports/debtors`);
+
+export const getEnhancedScore = (businessId: number) =>
+  client.post(`/businesses/${businessId}/credit-score/enhanced`);
+
+export const getLenderPreApprovals = (apiKey: string, minScore: number = 500) =>
+  client.get(`/lender/pre-approvals?min_score=${minScore}`, {
+    headers: { 'X-Lender-API-Key': apiKey }
+  });
+
+export const getLenderPortfolio = (apiKey: string) =>
+  client.get(`/lender/portfolio`, {
+    headers: { 'X-Lender-API-Key': apiKey }
+  });
+
+export const getLenderRevenue = (apiKey: string) =>
+  client.get(`/lender/revenue`, {
+    headers: { 'X-Lender-API-Key': apiKey }
+  });
