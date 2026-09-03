@@ -128,7 +128,20 @@ Route::prefix('v1')->group(function () {
             Route::get('/reports/products', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'products']);
             Route::get('/reports/debtors', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'debtors']);
         });
+
+        // ── Admin routes ──────────────────────────────────────────────────────
+        Route::get('/admin/model-status', function () {
+            $response = \Illuminate\Support\Facades\Http::get(env('ML_SERVICE_URL', 'http://ml:8001') . '/model-status');
+            return response()->json($response->json());
+        });
+
+        Route::post('/admin/train-model', function () {
+            $response = \Illuminate\Support\Facades\Http::post(env('ML_SERVICE_URL', 'http://ml:8001') . '/train-repayment-model');
+            return response()->json($response->json());
+        });
     });
+
+    
 
     /*
     |--------------------------------------------------------------------------

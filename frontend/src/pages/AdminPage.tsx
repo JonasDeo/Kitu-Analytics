@@ -33,7 +33,7 @@ const AdminPage: React.FC = () => {
   useEffect(() => {
     Promise.all([
       client.get('/businesses/1/fraud'),
-      client.get('http://localhost:8001/model-status').catch(() => ({ data: null })),
+      client.get('/admin/model-status').catch(() => ({ data: null })),
       client.get('/businesses/1/bot-compliance'),
     ]).then(([f, m, b]) => {
       setFraud(f.data);
@@ -44,11 +44,10 @@ const AdminPage: React.FC = () => {
 
   const trainModel = async () => {
     try {
-      const res = await fetch('http://localhost:8001/train-repayment-model', { method: 'POST' });
-      const data = await res.json();
-      alert(data.message);
+      const res = await client.post('/admin/train-model');
+      alert(res.data.message);
     } catch {
-      alert('Training endpoint unavailable from browser — call via backend.');
+      alert('Training failed.');
     }
   };
 
