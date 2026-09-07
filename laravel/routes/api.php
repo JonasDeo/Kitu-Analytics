@@ -29,6 +29,9 @@ Route::prefix('v1')->group(function () {
         'timestamp' => now()->toISOString(),
     ]));
 
+    // USSD callback — public, called by Africa's Talking
+    Route::post('/ussd/callback', [\App\Http\Controllers\Api\UssdController::class, 'callback']);
+
     /*
     |--------------------------------------------------------------------------
     | Authenticated SME routes
