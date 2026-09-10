@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -7,14 +8,17 @@ import DashboardPage from './pages/DashboardPage';
 import BookkeepingPage from './pages/BookkeepingPage';
 import LenderPortalPage from './pages/LenderPortalPage';
 import AdminPage from './pages/AdminPage';
+import ConsentPage from './pages/ConsentPage';
+import LanguageToggle from './components/ui/LanguageToggle';
 import { logout } from './api/auth';
 import { LogOut } from 'lucide-react';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
+  const { t } = useTranslation();
   if (loading) return (
     <div className="min-h-screen bg-paper flex items-center justify-center">
-      <div className="text-navy-900 font-display text-2xl">Kitu...</div>
+      <div className="text-navy-900 font-display text-2xl">{t('common.loading')}</div>
     </div>
   );
   return token ? <>{children}</> : <Navigate to="/login" />;
@@ -22,6 +26,7 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
 const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout: authLogout } = useAuth();
+  const { t } = useTranslation();
 
   const handleLogout = async () => {
     await logout();
@@ -30,10 +35,10 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   };
 
   const navItems = [
-    { to: '/dashboard', label: 'Alama ya Mkopo' },
-    { to: '/bookkeeping', label: 'Biashara' },
-    { to: '/lender', label: 'Benki & MFI' },
-    { to: '/admin', label: 'Admin' },
+    { to: '/dashboard', label: t('nav.credit_score') },
+    { to: '/bookkeeping', label: t('nav.bookkeeping') },
+    { to: '/lender', label: t('nav.lender') },
+    { to: '/admin', label: t('nav.admin') },
   ];
 
   return (
@@ -57,7 +62,8 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             ))}
           </nav>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <LanguageToggle />
           <span className="text-paper/40 text-xs hidden md:block">{user?.name}</span>
           <button onClick={handleLogout} className="text-paper/50 hover:text-paper transition-colors">
             <LogOut size={16} />
@@ -78,25 +84,20 @@ const App: React.FC = () => {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/consent" element={
+            <PrivateRoute><ConsentPage /></PrivateRoute>
+          } />
           <Route path="/dashboard" element={
-            <PrivateRoute>
-              <AppShell><DashboardPage /></AppShell>
-            </PrivateRoute>
+            <PrivateRoute><AppShell><DashboardPage /></AppShell></PrivateRoute>
           } />
           <Route path="/bookkeeping" element={
-            <PrivateRoute>
-              <AppShell><BookkeepingPage /></AppShell>
-            </PrivateRoute>
+            <PrivateRoute><AppShell><BookkeepingPage /></AppShell></PrivateRoute>
           } />
           <Route path="/lender" element={
-            <PrivateRoute>
-              <AppShell><LenderPortalPage /></AppShell>
-            </PrivateRoute>
+            <PrivateRoute><AppShell><LenderPortalPage /></AppShell></PrivateRoute>
           } />
           <Route path="/admin" element={
-            <PrivateRoute>
-              <AppShell><AdminPage /></AppShell>
-            </PrivateRoute>
+            <PrivateRoute><AppShell><AdminPage /></AppShell></PrivateRoute>
           } />
           <Route path="*" element={<Navigate to="/dashboard" />} />
         </Routes>
