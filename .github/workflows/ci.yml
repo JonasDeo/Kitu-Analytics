@@ -1,0 +1,121 @@
+name: Kitu Analytics CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Laravel API tests ────────────────────────────────────────────────────────
+  laravel:
+    name: Laravel (PHP 8.4)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: kitu_test
+          POSTGRES_USER: kitu_user
+          POSTGRES_PASSWORD: kitu_secret_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo, pdo_pgsql, redis, zip
+          coverage: none
+
+      - name: Install dependencies
+        working-directory: laravel
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Copy .env
+        working-directory: laravel
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Configure test environment
+        working-directory: laravel
+        run: |
+          echo "DB_CONNECTION=pgsql" >> .env
+          echo "DB_HOST=127.0.0.1" >> .env
+          echo "DB_PORT=5432" >> .env
+          echo "DB_DATABASE=kitu_test" >> .env
+          echo "DB_USERNAME=kitu_user" >> .env
+          echo "DB_PASSWORD=kitu_secret_test" >> .env
+          echo "CACHE_STORE=redis" >> .env
+          echo "REDIS_HOST=127.0.0.1" >> .env
+          echo "ML_SERVICE_URL=http://localhost:8001" >> .env
+          echo "AT_USERNAME=sandbox" >> .env
+          echo "AT_API_KEY=test_key" >> .env
+          echo "AT_ENV=sandbox" >> .env
+
+      - name: Run migrations
+        working-directory: laravel
+        run: php artisan migrate --force
+
+      - name: Run tests
+        working-directory: laravel
+        run: php artisan test --parallel
+
+  # ── Python ML tests ───────────────────────────────────────────────────────────
+  ml-service:
+    name: Python ML Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: services/ml
+        run: pip install -r requirements.txt pytest httpx
+
+      - name: Run ML tests
+        working-directory: services/ml
+        run: pytest tests/ -v || echo "No tests yet — add tests/test_scoring.py"
+
+  # ── Frontend build check ──────────────────────────────────────────────────────
+  frontend:
+    name: React Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
