@@ -87,6 +87,8 @@ Route::prefix('v1')->group(function () {
 
         Route::post('/businesses/{business}/credit-score/enhanced', [CreditScoreController::class, 'enhanced']);
 
+        Route::post('/businesses/{business}/transactions/parse-photo', [TransactionController::class, 'parsePhoto']);
+
         // ── Bookkeeping Module ────────────────────────────────────────────────────
         Route::prefix('bk')->group(function () {
 

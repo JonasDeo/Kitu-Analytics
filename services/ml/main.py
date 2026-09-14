@@ -12,6 +12,8 @@ import os
 import json
 import joblib
 import threading
+import pytesseract
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 from sklearn.ensemble import GradientBoostingRegressor
@@ -21,6 +23,71 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.colors import HexColor
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.units import mm
+from fastapi import UploadFile, File
+from PIL import Image
+
+class MpesaSmsParser:
+    """Reusable M-Pesa SMS parser — used by both the REST endpoint and OCR."""
+
+    def parse(self, sms: str):
+        sms = sms.strip()
+
+        # Incoming
+        if re.search(r'received\s+TZS\s+([\d,]+)\s+from\s+(.+?)(?:\s+(\d{10,}))?(?:\s+on\s+|$)', sms, re.I):
+            m = re.search(r'received\s+TZS\s+([\d,]+)\s+from\s+(.+?)(?:\s+(\d{10,}))?(?:\s+on\s+|$)', sms, re.I)
+            return {
+                'type': 'incoming',
+                'amount': float(m.group(1).replace(',', '')),
+                'counterparty_name': m.group(2).strip(),
+                'counterparty_phone': m.group(3),
+                'transacted_at': self._extract_date(sms) or datetime.utcnow().isoformat(),
+                'mpesa_reference': self._extract_reference(sms),
+            }
+
+        # Outgoing
+        if re.search(r'sent\s+TZS\s+([\d,]+)\s+to\s+(.+?)(?:\s+(\d{10,}))?(?:\s+on\s+|\.|\s*$)', sms, re.I):
+            m = re.search(r'sent\s+TZS\s+([\d,]+)\s+to\s+(.+?)(?:\s+(\d{10,}))?(?:\s+on\s+|\.|\s*$)', sms, re.I)
+            return {
+                'type': 'outgoing',
+                'amount': float(m.group(1).replace(',', '')),
+                'counterparty_name': m.group(2).strip(),
+                'counterparty_phone': m.group(3),
+                'transacted_at': self._extract_date(sms) or datetime.utcnow().isoformat(),
+                'mpesa_reference': self._extract_reference(sms),
+            }
+
+        # Withdrawal
+        if re.search(r'withdrawn\s+TZS\s+([\d,]+)', sms, re.I):
+            m = re.search(r'withdrawn\s+TZS\s+([\d,]+)', sms, re.I)
+            return {
+                'type': 'withdrawal',
+                'amount': float(m.group(1).replace(',', '')),
+                'counterparty_name': 'ATM/Agent',
+                'transacted_at': self._extract_date(sms) or datetime.utcnow().isoformat(),
+                'mpesa_reference': self._extract_reference(sms),
+            }
+
+        return None
+
+    def _extract_date(self, sms: str):
+        m = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})\s+at\s+(\d{1,2}:\d{2}\s*[AP]M)', sms, re.I)
+        if not m:
+            return None
+        date_part, time_part = m.group(1), m.group(2).upper().replace(' ', '')
+        segs = date_part.split('/')
+        if len(segs[2]) == 2:
+            segs[2] = '20' + segs[2]
+        from datetime import datetime as dt
+        try:
+            parsed = dt.strptime(f"{segs[0]}/{segs[1]}/{segs[2]} {time_part}", '%d/%m/%Y %I:%M%p')
+            return parsed.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            return None
+
+    def _extract_reference(self, sms: str):
+        m = re.search(r'\b([A-Z][A-Z0-9]{8,11})\b', sms)
+        return m.group(1) if m else None
+
 
 app = FastAPI(title="Kitu ML Service", version="2.0.0")
 
@@ -1141,4 +1208,85 @@ def score_with_bookkeeping(business_id: int):
             if has_mpesa else
             "Add M-Pesa transaction history to further strengthen your score."
         ),
+    }
+
+@app.post("/ocr/parse-mpesa")
+async def ocr_parse_mpesa(file: UploadFile = File(...)):
+    """
+    Extract M-Pesa transactions from a photo of SMS messages.
+    Accepts: jpg, png, webp
+    Returns: list of parsed transactions
+    """
+    # Validate file type
+    allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg']
+    if file.content_type not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported file type: {file.content_type}. Use JPG or PNG."
+        )
+
+    # Read image
+    contents = await file.read()
+    import io
+    image = Image.open(io.BytesIO(contents))
+
+    # Enhance image for better OCR
+    image = image.convert('L')  # Grayscale
+    image = image.resize(
+        (image.width * 2, image.height * 2),
+        Image.LANCZOS
+    )
+
+    # Extract text with Tesseract
+    # Try English first (M-Pesa messages are usually in English)
+    # then Swahili as fallback
+    try:
+        text = pytesseract.image_to_string(
+            image,
+            lang='eng',
+            config='--psm 6'  # Assume uniform block of text
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OCR failed: {str(e)}")
+
+    # Parse extracted text for M-Pesa transaction patterns
+    parser = MpesaSmsParser()
+    lines = text.strip().split('\n')
+
+    transactions = []
+    raw_lines_matched = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        parsed = parser.parse(line)
+        if parsed:
+            transactions.append(parsed)
+            raw_lines_matched.append(line)
+
+    # Also try combining adjacent lines in case SMS was split
+    if len(transactions) == 0:
+        combined_text = ' '.join(lines)
+        # Split on common M-Pesa message starters
+        segments = re.split(
+            r'(?=Confirmed\.)|(?=You have received)|(?=You have sent)|(?=You have withdrawn)',
+            combined_text,
+            flags=re.IGNORECASE
+        )
+        for segment in segments:
+            segment = segment.strip()
+            if segment:
+                parsed = parser.parse(segment)
+                if parsed:
+                    transactions.append(parsed)
+
+    return {
+        "extracted_text": text,
+        "transactions_found": len(transactions),
+        "transactions": transactions,
+        "raw_lines_matched": raw_lines_matched,
+        "ocr_engine": "tesseract",
+        "image_size": f"{image.width}x{image.height}",
     }
