@@ -757,24 +757,27 @@ const DashboardPage: React.FC = () => {
             )}
           </div>
 
-          {business && (
-            <div className="flex items-center gap-3 flex-wrap">
-              <SmsWidget
-                businessId={business.id}
-                onSuccess={() => {
-                  setLoading(true);
-                  loadDashboard();
-                }}
-              />
-              <OcrWidget
-                businessId={business.id}
-                onSuccess={() => {
-                  setLoading(true);
-                  loadDashboard();
-                }}
-              />
-            </div>
-          )}
+          <div className="flex items-center gap-3 flex-wrap">
+            {business && (
+              <>
+                <OcrWidget
+                  businessId={business.id}
+                  onSuccess={() => {
+                    setLoading(true);
+                    loadDashboard();
+                  }}
+                />
+
+                <SmsWidget
+                  businessId={business.id}
+                  onSuccess={() => {
+                    setLoading(true);
+                    loadDashboard();
+                  }}
+                />
+              </>
+            )}
+          </div>
         </div>
 
         {/* Score + Stats */}
