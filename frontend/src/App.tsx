@@ -65,7 +65,7 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <div className="flex items-center gap-3">
           <LanguageToggle />
           <span className="text-paper/40 text-xs hidden md:block">{user?.name}</span>
-          <button onClick={handleLogout} className="text-paper/50 hover:text-paper transition-colors">
+          <button onClick={handleLogout} title={t('common.logout')} className="text-paper/50 hover:text-paper transition-colors">
             <LogOut size={16} />
           </button>
         </div>
