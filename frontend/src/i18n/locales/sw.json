@@ -126,7 +126,15 @@
     "stock_remaining": "zilizobaki",
     "low_stock": "Stoki ndogo",
     "profit_margin": "Faida",
-    "loading": "Inapakia..."
+    "loading": "Inapakia...",
+    "sales_30_days": "Mauzo (Siku 30)",
+    "total_revenue": "Mapato Yote",
+    "outstanding": "Bado Inadaiwa",
+    "partial_sales": "Mauzo ya Awamu",
+    "revenue": "Mapato",
+    "products": "bidhaa",
+    "price": "Bei",
+    "profit": "Faida"
   },
   "common": {
     "logout": "Toka",

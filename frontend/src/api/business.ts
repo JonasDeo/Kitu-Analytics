@@ -79,3 +79,18 @@ export const getLenderRevenue = (apiKey: string) =>
   client.get(`/lender/revenue`, {
     headers: { 'X-Lender-API-Key': apiKey }
   });
+
+export const getEmployees = () =>
+  client.get('/bk/employees');
+
+export const getEmployeePerformance = () =>
+  client.get('/bk/employees/performance');
+
+export const clockInEmployee = (employeeId: number, branchId: number) =>
+  client.post(`/bk/employees/${employeeId}/clock-in`, { branch_id: branchId });
+
+export const clockOutEmployee = (employeeId: number) =>
+  client.post(`/bk/employees/${employeeId}/clock-out`);
+
+export const createEmployee = (data: object) =>
+  client.post('/bk/employees', data);

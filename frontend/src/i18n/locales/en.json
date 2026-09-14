@@ -126,7 +126,15 @@
     "stock_remaining": "remaining",
     "low_stock": "Low stock",
     "profit_margin": "Margin",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "sales_30_days": "Sales (30 Days)",
+    "total_revenue": "Total Revenue",
+    "outstanding": "Outstanding",
+    "partial_sales": "Partial Sales",
+    "revenue": "Revenue",
+    "products": "products",
+    "price": "Price",
+    "profit": "Margin"
   },
   "common": {
     "logout": "Logout",

@@ -4,7 +4,11 @@ import {
   getBookkeepingDailyReport,
   getBookkeepingSummary,
   getBookkeepingProducts,
-  getBookkeepingDebtors
+  getBookkeepingDebtors,
+  getEmployees,
+  getEmployeePerformance,
+  clockInEmployee,
+  clockOutEmployee,
 } from '../api/business';
 import {
   BarChart,
@@ -15,7 +19,7 @@ import {
   ResponsiveContainer,
   Cell
 } from 'recharts';
-import { ShoppingBag, TrendingUp, AlertTriangle, Users } from 'lucide-react';
+import { ShoppingBag, TrendingUp, AlertTriangle, Users, Clock } from 'lucide-react';
 
 interface DailyReport {
   date: string;
@@ -84,6 +88,27 @@ interface DebtorReport {
   };
 }
 
+interface Employee {
+  id: number;
+  name: string;
+  phone?: string;
+  role: string;
+  is_clocked_in: boolean;
+  monthly_sales: number;
+  active_shift?: { clock_in: string };
+  branch?: { name: string };
+}
+
+interface Performance {
+  id: number;
+  name: string;
+  role: string;
+  shifts_worked: number;
+  hours_worked: string;
+  total_sales: string;
+  total_transactions: number;
+}
+
 const BookkeepingPage: React.FC = () => {
   const { t } = useTranslation();
 
@@ -92,24 +117,26 @@ const BookkeepingPage: React.FC = () => {
   const [products, setProducts] = useState<ProductReport | null>(null);
   const [debtors, setDebtors] = useState<DebtorReport | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeSection, setActiveSection] = useState<
-    'overview' | 'stock' | 'debtors'
-  >('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'stock' | 'debtors' | 'employees'>('overview');
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [performance, setPerformance] = useState<Performance[]>([]);
 
-  useEffect(() => {
+ useEffect(() => {
     Promise.all([
       getBookkeepingDailyReport(),
       getBookkeepingSummary(30),
       getBookkeepingProducts(),
       getBookkeepingDebtors(),
-    ])
-      .then(([d, s, p, db]) => {
-        setDaily(d.data);
-        setSummary(s.data);
-        setProducts(p.data);
-        setDebtors(db.data);
-      })
-      .finally(() => setLoading(false));
+      getEmployees(),
+      getEmployeePerformance(),
+    ]).then(([d, s, p, db, emp, perf]) => {
+      setDaily(d.data);
+      setSummary(s.data);
+      setProducts(p.data);
+      setDebtors(db.data);
+      setEmployees(emp.data);
+      setPerformance(perf.data.performance || []);
+    }).finally(() => setLoading(false));
   }, []);
 
   if (loading) {
@@ -127,6 +154,22 @@ const BookkeepingPage: React.FC = () => {
       name: p.name.length > 12 ? p.name.slice(0, 12) + '…' : p.name,
       revenue: p.revenue,
     })) || [];
+
+
+    const handleClockToggle = async (employee: Employee) => {
+    try {
+      if (employee.is_clocked_in) {
+        await clockOutEmployee(employee.id);
+      } else {
+        await clockInEmployee(employee.id, 1); // branch_id 1 for now
+      }
+      // Refresh employees
+      const res = await getEmployees();
+      setEmployees(res.data);
+    } catch (err) {
+      console.error('Clock toggle failed', err);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -200,6 +243,7 @@ const BookkeepingPage: React.FC = () => {
               key: 'debtors',
               label: t('bookkeeping.debts'),
             },
+            { key: 'employees', label: 'Wafanyakazi' },
           ] as const
         ).map((tab) => (
           <button
@@ -503,6 +547,111 @@ const BookkeepingPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Employees section */}
+{activeSection === 'employees' && (
+  <>
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      {[
+        { label: 'Wafanyakazi Wote', value: employees.length },
+        { label: 'Walioingia Kazini', value: employees.filter(e => e.is_clocked_in).length },
+        { label: 'Mauzo ya Mwezi (TZS)', value: `${performance.reduce((s, p) => s + parseFloat(p.total_sales), 0).toLocaleString()}` },
+      ].map((s, i) => (
+        <div key={i} className="bg-white rounded-2xl p-5 shadow-sm border border-navy-900/5">
+          <p className="font-display text-2xl text-navy-900">{s.value}</p>
+          <p className="text-xs text-navy-700 mt-1">{s.label}</p>
+        </div>
+      ))}
+    </div>
+
+    {/* Employee list with clock in/out */}
+    <div className="bg-white rounded-2xl shadow-sm border border-navy-900/5 overflow-hidden">
+      <div className="px-6 py-4 border-b border-paper">
+        <p className="text-sm font-semibold text-navy-800">Wafanyakazi ({employees.length})</p>
+      </div>
+      {employees.length === 0 ? (
+        <div className="px-6 py-8 text-center">
+          <Users size={28} className="text-navy-900/20 mx-auto mb-2" />
+          <p className="text-sm text-navy-700">Bado hauna wafanyakazi.</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-paper">
+          {employees.map((emp) => (
+            <div key={emp.id} className="px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold ${emp.is_clocked_in ? 'bg-kitu-green' : 'bg-navy-700'}`}>
+                  {emp.name[0]}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-navy-900">{emp.name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-navy-700 capitalize">{emp.role}</p>
+                    {emp.branch && <span className="text-xs text-navy-700">· {emp.branch.name}</span>}
+                    {emp.is_clocked_in && emp.active_shift && (
+                      <span className="flex items-center gap-1 text-xs text-kitu-green">
+                        <Clock size={10} /> {new Date(emp.active_shift.clock_in).toLocaleTimeString('en-TZ', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-navy-700 hidden md:block">
+                  TZS {emp.monthly_sales.toLocaleString()} mwezi
+                </p>
+                <button
+                  onClick={() => handleClockToggle(emp)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${emp.is_clocked_in ? 'bg-red-50 text-kitu-red hover:bg-red-100' : 'bg-green-50 text-kitu-green hover:bg-green-100'}`}>
+                  {emp.is_clocked_in ? 'Toka' : 'Ingia'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+
+    {/* Performance table */}
+    {performance.length > 0 && (
+      <div className="bg-white rounded-2xl shadow-sm border border-navy-900/5 overflow-hidden">
+        <div className="px-6 py-4 border-b border-paper">
+          <p className="text-sm font-semibold text-navy-800">Utendaji wa Mwezi Huu</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-paper">
+                <th className="text-left px-6 py-3 text-xs font-semibold text-navy-700 uppercase tracking-wider">Jina</th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-navy-700 uppercase tracking-wider">Zamu</th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-navy-700 uppercase tracking-wider">Masaa</th>
+                <th className="text-right px-6 py-3 text-xs font-semibold text-navy-700 uppercase tracking-wider">Mauzo</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-paper">
+              {performance.map((p, i) => (
+                <tr key={i} className="hover:bg-paper/50 transition-colors">
+                  <td className="px-6 py-3">
+                    <div>
+                      <p className="font-medium text-navy-900">{p.name}</p>
+                      <p className="text-xs text-navy-700 capitalize">{p.role}</p>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-center text-navy-900">{p.shifts_worked}</td>
+                  <td className="px-4 py-3 text-center text-navy-700">
+                    {parseFloat(p.hours_worked).toFixed(1)}h
+                  </td>
+                  <td className="px-6 py-3 text-right font-semibold text-navy-900">
+                    TZS {parseFloat(p.total_sales).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+  </>
+)}
     </div>
   );
 };
