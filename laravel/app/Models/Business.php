@@ -73,4 +73,7 @@ class Business extends Model
     public function customers() { return $this->hasMany(Customer::class); }
     public function suppliers() { return $this->hasMany(Supplier::class); }
     public function bkExpenses() { return $this->hasMany(BkExpense::class); }
+
+    public function employees() { return $this->hasMany(Employee::class); }
+    public function shifts()    { return $this->hasMany(Shift::class); }
 }

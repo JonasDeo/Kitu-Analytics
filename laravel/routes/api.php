@@ -130,6 +130,15 @@ Route::prefix('v1')->group(function () {
             Route::get('/reports/summary', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'summary']);
             Route::get('/reports/products', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'products']);
             Route::get('/reports/debtors', [\App\Http\Controllers\Api\Bookkeeping\ReportsController::class, 'debtors']);
+        
+            // Employees
+            Route::get('/employees', [\App\Http\Controllers\Api\Bookkeeping\EmployeeController::class, 'index']);
+            Route::post('/employees', [\App\Http\Controllers\Api\Bookkeeping\EmployeeController::class, 'store']);
+            Route::put('/employees/{employee}', [\App\Http\Controllers\Api\Bookkeeping\EmployeeController::class, 'update']);
+            Route::post('/employees/{employee}/clock-in', [\App\Http\Controllers\Api\Bookkeeping\EmployeeController::class, 'clockIn']);
+            Route::post('/employees/{employee}/clock-out', [\App\Http\Controllers\Api\Bookkeeping\EmployeeController::class, 'clockOut']);
+            Route::get('/employees/{employee}/shifts', [\App\Http\Controllers\Api\Bookkeeping\EmployeeController::class, 'shifts']);
+            Route::get('/employees/performance', [\App\Http\Controllers\Api\Bookkeeping\EmployeeController::class, 'performance']);
         });
 
         // ── Admin routes ──────────────────────────────────────────────────────
