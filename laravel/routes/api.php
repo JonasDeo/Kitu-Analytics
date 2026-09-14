@@ -32,6 +32,10 @@ Route::prefix('v1')->group(function () {
     // USSD callback — public, called by Africa's Talking
     Route::post('/ussd/callback', [\App\Http\Controllers\Api\UssdController::class, 'callback']);
 
+    // WhatsApp webhook
+    Route::get('/whatsapp/webhook', [\App\Http\Controllers\Api\WhatsAppController::class, 'verify']);
+    Route::post('/whatsapp/webhook', [\App\Http\Controllers\Api\WhatsAppController::class, 'webhook']);
+
     /*
     |--------------------------------------------------------------------------
     | Authenticated SME routes

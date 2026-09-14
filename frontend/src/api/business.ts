@@ -94,3 +94,11 @@ export const clockOutEmployee = (employeeId: number) =>
 
 export const createEmployee = (data: object) =>
   client.post('/bk/employees', data);
+
+export const parsePhotoOcr = (businessId: number, photo: File) => {
+  const formData = new FormData();
+  formData.append('photo', photo);
+  return client.post(`/businesses/${businessId}/transactions/parse-photo`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};

@@ -6,6 +6,7 @@ import {
   getBusinessSummary, parseSms, getNetworkAnalysis,
   getForecast, getCreditReport,
   submitAppeal,
+  parsePhotoOcr,
 } from '../api/business';
 import { logout } from '../api/auth';
 import { useNavigate } from 'react-router-dom';
@@ -207,6 +208,65 @@ const ScoreGauge: React.FC<{ score: number; grade: string }> = ({ score, grade }
         Grade {grade}
       </span>
     </div>
+  );
+};
+
+const OcrWidget: React.FC<{ businessId: number; onSuccess: () => void }> = ({ businessId, onSuccess }) => {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true); setResult(null); setError(null);
+    try {
+      const res = await parsePhotoOcr(businessId, file);
+      const d = res.data;
+      setResult(`✓ Nimepata miamala ${d.transactions_found} — imehifadhiwa ${d.transactions_saved} mpya`);
+      onSuccess();
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'OCR imeshindwa. Jaribu tena.');
+    } finally {
+      setLoading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  if (!open) return (
+    <button onClick={() => setOpen(true)}
+      className="flex items-center gap-2 bg-navy-800 text-paper text-sm font-semibold px-4 py-2 rounded-lg hover:bg-navy-700 transition-colors">
+      📸 Pakia Picha ya M-Pesa
+    </button>
+  );
+
+  return (
+    <div className="bg-white rounded-2xl p-6 shadow-sm border border-navy-900/5">
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-xs font-semibold text-navy-700 uppercase tracking-widest">OCR — Pakia Picha ya SMS</p>
+        <button onClick={() => { setOpen(false); setResult(null); setError(null); }}>
+          <X size={16} />
+        </button>
+      </div>
+      <p className="text-xs text-navy-700 mb-4">
+        Piga picha ya SMS zako za M-Pesa. Mfumo utasoma na kuhifadhi miamala automatically.
+      </p>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        onChange={handleFile}
+        disabled={loading}
+        className="w-full text-sm text-navy-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-navy-900 file:text-paper file:text-xs file:font-semibold hover:file:bg-navy-800 cursor-pointer"
+      />
+      {loading && <p className="text-navy-700 text-sm mt-3 animate-pulse">⏳ Inasoma picha...</p>}
+      {result && <p className="text-kitu-green text-sm mt-3 font-medium">{result}</p>}
+      {error && <p className="text-kitu-red text-sm mt-3">{error}</p>}
+    </div>
+    
   );
 };
 
@@ -698,13 +758,22 @@ const DashboardPage: React.FC = () => {
           </div>
 
           {business && (
-            <SmsWidget
-              businessId={business.id}
-              onSuccess={() => {
-                setLoading(true);
-                loadDashboard();
-              }}
-            />
+            <div className="flex items-center gap-3 flex-wrap">
+              <SmsWidget
+                businessId={business.id}
+                onSuccess={() => {
+                  setLoading(true);
+                  loadDashboard();
+                }}
+              />
+              <OcrWidget
+                businessId={business.id}
+                onSuccess={() => {
+                  setLoading(true);
+                  loadDashboard();
+                }}
+              />
+            </div>
           )}
         </div>
 
