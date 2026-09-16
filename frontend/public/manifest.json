@@ -1,25 +1,33 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "Kitu",
+  "name": "Kitu Analytics",
+  "description": "Akili ya Fedha kwa Biashara Yako",
   "icons": [
     {
       "src": "favicon.ico",
       "sizes": "64x64 32x32 24x24 16x16",
       "type": "image/x-icon"
-    },
-    {
-      "src": "logo192.png",
-      "type": "image/png",
-      "sizes": "192x192"
-    },
-    {
-      "src": "logo512.png",
-      "type": "image/png",
-      "sizes": "512x512"
     }
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "theme_color": "#0D1B2A",
+  "background_color": "#F7F4EF",
+  "orientation": "portrait",
+  "lang": "sw",
+  "categories": ["finance", "business"],
+  "shortcuts": [
+    {
+      "name": "Alama ya Mkopo",
+      "short_name": "Alama",
+      "url": "/dashboard",
+      "description": "Angalia alama yako ya mkopo"
+    },
+    {
+      "name": "Biashara",
+      "short_name": "Biashara",
+      "url": "/bookkeeping",
+      "description": "Rekodi za biashara yako"
+    }
+  ]
 }

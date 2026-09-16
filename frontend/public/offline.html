@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kitu Analytics — Nje ya Mtandao</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0D1B2A;
+      color: #F7F4EF;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    .logo { font-size: 48px; font-weight: bold; margin-bottom: 4px; }
+    .tagline { color: #00A651; font-size: 12px; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 48px; }
+    .icon { font-size: 64px; margin-bottom: 24px; }
+    h1 { font-size: 28px; margin-bottom: 12px; }
+    p { color: rgba(247,244,239,0.6); font-size: 14px; line-height: 1.6; margin-bottom: 32px; }
+    .features { text-align: left; background: rgba(255,255,255,0.05); border-radius: 16px; padding: 20px; margin-bottom: 32px; }
+    .features p { color: rgba(247,244,239,0.8); margin-bottom: 8px; font-size: 13px; }
+    .features p:last-child { margin-bottom: 0; }
+    button {
+      background: #00A651;
+      color: white;
+      border: none;
+      padding: 14px 32px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:hover { background: #008f45; }
+    .ussd { margin-top: 20px; color: rgba(247,244,239,0.4); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">Kitu</div>
+    <div class="tagline">Analytics</div>
+    <div class="icon">📡</div>
+    <h1>Huna Mtandao</h1>
+    <p>Hakuna muunganiko wa intaneti kwa sasa. Data yako ya hivi karibuni bado inapatikana.</p>
+    <div class="features">
+      <p>✅ Alama yako ya mkopo — inapatikana nje ya mtandao</p>
+      <p>✅ Miamala ya hivi karibuni — imehifadhiwa</p>
+      <p>✅ Taarifa za biashara — zinapatikana</p>
+      <p>⏳ Miamala mipya — itaongezwa unapounganika</p>
+    </div>
+    <button onclick="window.location.reload()">🔄 Jaribu Tena</button>
+    <div class="ussd">Au tumia USSD: *384*8562#</div>
+  </div>
+</body>
+</html>

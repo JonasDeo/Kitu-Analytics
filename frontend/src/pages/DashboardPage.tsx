@@ -15,6 +15,7 @@ import {
   BarChart, Bar, Cell, ReferenceLine,
 } from 'recharts';
 import { LogOut, TrendingUp, RefreshCw, Plus, X, Download, Users, Globe } from 'lucide-react';
+import { queueTransaction } from '../utils/offlineQueue';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Business {
@@ -281,30 +282,28 @@ const SmsWidget: React.FC<{ businessId: number; onSuccess: () => void }> = ({ bu
   const [error, setError] = useState<string | null>(null);
 
   const handleParse = async () => {
-    if (!sms.trim()) return;
+  if (!sms.trim()) return;
+  setLoading(true); setResult(null); setError(null);
 
-    setLoading(true);
-    setResult(null);
-    setError(null);
+  // Check if online
+  if (!navigator.onLine) {
+    const token = localStorage.getItem('kitu_token') || '';
+    await queueTransaction(businessId, sms, token);
+    setResult('⏳ Huna mtandao. SMS imehifadhiwa — itatumwa unapounganika.');
+    setSms('');
+    setLoading(false);
+    return;
+  }
 
-    try {
-      const res = await parseSms(businessId, sms);
-      const transaction = res.data;
-
-      setResult(
-        `✓ ${transaction.type === 'incoming' ? 'Received' : 'Sent'} TZS ${parseFloat(transaction.amount).toLocaleString()} — ${transaction.counterparty_name}`
-      );
-
-      setSms('');
-      onSuccess();
-    } catch (err: any) {
-      setError(
-        err.response?.data?.message || 'Could not parse this SMS.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  try {
+    const res = await parseSms(businessId, sms);
+    const t = res.data;
+    setResult(`✓ ${t.type === 'incoming' ? 'Received' : 'Sent'} TZS ${parseFloat(t.amount).toLocaleString()} — ${t.counterparty_name}`);
+    setSms(''); onSuccess();
+  } catch (err: any) {
+    setError(err.response?.data?.message || 'Could not parse this SMS.');
+  } finally { setLoading(false); }
+};
 
   if (!open) return (
     <button

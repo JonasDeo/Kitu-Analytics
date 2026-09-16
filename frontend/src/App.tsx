@@ -12,6 +12,7 @@ import ConsentPage from './pages/ConsentPage';
 import LanguageToggle from './components/ui/LanguageToggle';
 import { logout } from './api/auth';
 import { LogOut } from 'lucide-react';
+import OfflineIndicator from './components/ui/OfflineIndicator';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
@@ -73,6 +74,7 @@ const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       <main className="max-w-5xl mx-auto px-4 py-8">
         {children}
       </main>
+      <OfflineIndicator />
     </div>
   );
 };
