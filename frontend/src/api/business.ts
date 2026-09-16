@@ -50,17 +50,17 @@ export const postRepaymentOutcome = (phone: string, loanAmount: number, outcome:
 export const getBookkeepingSales = (businessId: number) =>
   client.get(`/bk/sales`);
 
-export const getBookkeepingDailyReport = () =>
-  client.get(`/bk/reports/daily`);
+export const getBookkeepingDailyReport = (branchId?: number) =>
+  client.get(`/bk/reports/daily${branchId ? `?branch_id=${branchId}` : ''}`);
 
-export const getBookkeepingSummary = (days: number = 30) =>
-  client.get(`/bk/reports/summary?days=${days}`);
+export const getBookkeepingSummary = (days: number = 30, branchId?: number) =>
+  client.get(`/bk/reports/summary?days=${days}${branchId ? `&branch_id=${branchId}` : ''}`);
 
-export const getBookkeepingProducts = () =>
-  client.get(`/bk/reports/products`);
+export const getBookkeepingProducts = (branchId?: number) =>
+  client.get(`/bk/reports/products${branchId ? `?branch_id=${branchId}` : ''}`);
 
-export const getBookkeepingDebtors = () =>
-  client.get(`/bk/reports/debtors`);
+export const getBookkeepingDebtors = (branchId?: number) =>
+  client.get(`/bk/reports/debtors${branchId ? `?branch_id=${branchId}` : ''}`);
 
 export const getEnhancedScore = (businessId: number) =>
   client.post(`/businesses/${businessId}/credit-score/enhanced`);
@@ -102,3 +102,6 @@ export const parsePhotoOcr = (businessId: number, photo: File) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 };
+
+export const getBranches = () =>
+  client.get('/bk/branches');

@@ -13,6 +13,7 @@ import LanguageToggle from './components/ui/LanguageToggle';
 import { logout } from './api/auth';
 import { LogOut } from 'lucide-react';
 import OfflineIndicator from './components/ui/OfflineIndicator';
+import { BranchProvider } from './context/BranchContext';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token, loading } = useAuth();
@@ -93,7 +94,13 @@ const App: React.FC = () => {
             <PrivateRoute><AppShell><DashboardPage /></AppShell></PrivateRoute>
           } />
           <Route path="/bookkeeping" element={
-            <PrivateRoute><AppShell><BookkeepingPage /></AppShell></PrivateRoute>
+            <PrivateRoute>
+              <AppShell>
+                <BranchProvider>
+                  <BookkeepingPage />
+                </BranchProvider>
+              </AppShell>
+            </PrivateRoute>
           } />
           <Route path="/lender" element={
             <PrivateRoute><AppShell><LenderPortalPage /></AppShell></PrivateRoute>

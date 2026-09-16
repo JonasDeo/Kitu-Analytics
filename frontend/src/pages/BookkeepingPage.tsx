@@ -20,6 +20,9 @@ import {
   Cell
 } from 'recharts';
 import { ShoppingBag, TrendingUp, AlertTriangle, Users, Clock } from 'lucide-react';
+import { useBranch } from '../context/BranchContext';
+import BranchSwitcher from '../components/ui/BranchSwitcher';
+
 
 interface DailyReport {
   date: string;
@@ -111,6 +114,7 @@ interface Performance {
 
 const BookkeepingPage: React.FC = () => {
   const { t } = useTranslation();
+  const { activeBranch } = useBranch();
 
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -122,11 +126,12 @@ const BookkeepingPage: React.FC = () => {
   const [performance, setPerformance] = useState<Performance[]>([]);
 
  useEffect(() => {
+    setLoading(true);
     Promise.all([
-      getBookkeepingDailyReport(),
-      getBookkeepingSummary(30),
-      getBookkeepingProducts(),
-      getBookkeepingDebtors(),
+      getBookkeepingDailyReport(activeBranch?.id),
+      getBookkeepingSummary(30, activeBranch?.id),
+      getBookkeepingProducts(activeBranch?.id),
+      getBookkeepingDebtors(activeBranch?.id),
       getEmployees(),
       getEmployeePerformance(),
     ]).then(([d, s, p, db, emp, perf]) => {
@@ -137,7 +142,7 @@ const BookkeepingPage: React.FC = () => {
       setEmployees(emp.data);
       setPerformance(perf.data.performance || []);
     }).finally(() => setLoading(false));
-  }, []);
+  }, [activeBranch?.id]);
 
   if (loading) {
     return (
@@ -176,9 +181,10 @@ const BookkeepingPage: React.FC = () => {
 
       {/* Hero number — today's revenue */}
       <div className="bg-navy-900 rounded-2xl p-8">
-        <p className="text-paper/50 text-sm mb-2">
-          {t('bookkeeping.today_revenue')}
-        </p>
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-paper/50 text-sm">{t('bookkeeping.today_revenue')}</p>
+          <BranchSwitcher />
+        </div>
 
         <div className="flex items-end gap-4 flex-wrap">
           <span className="font-display text-6xl text-paper">

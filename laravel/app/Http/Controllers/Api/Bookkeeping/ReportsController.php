@@ -15,65 +15,68 @@ class ReportsController extends Controller
 
     public function daily(Request $request)
     {
-        $business = $this->business($request);
-        $date = $request->query('date', today()->toDateString());
+        $business  = $this->business($request);
+        $date      = $request->query('date', today()->toDateString());
+        $branchId  = $request->query('branch_id');
 
-        $sales = $business->sales()
-            ->whereDate('sold_at', $date)
-            ->with('items.product')
-            ->get();
+        $salesQuery = $business->sales()->whereDate('sold_at', $date)->with('items.product');
+        if ($branchId) $salesQuery->where('branch_id', $branchId);
+        $sales = $salesQuery->get();
 
-        $expenses = $business->bkExpenses()
-            ->whereDate('expensed_at', $date)
-            ->get();
+        $expensesQuery = $business->bkExpenses()->whereDate('expensed_at', $date);
+        if ($branchId) $expensesQuery->where('branch_id', $branchId);
+        $expenses = $expensesQuery->get();
 
-        $totalRevenue = $sales->sum('total_amount');
+        $totalRevenue   = $sales->sum('total_amount');
         $totalCollected = $sales->sum('amount_paid');
-        $totalOwed = $sales->sum('balance_owed');
-        $totalExpenses = $expenses->sum('amount');
-        $netProfit = $totalCollected - $totalExpenses;
+        $totalOwed      = $sales->sum('balance_owed');
+        $totalExpenses  = $expenses->sum('amount');
+        $netProfit      = $totalCollected - $totalExpenses;
 
         return response()->json([
-            'date' => $date,
-            'sales_count' => $sales->count(),
-            'total_revenue' => $totalRevenue,
+            'date'            => $date,
+            'branch_id'       => $branchId,
+            'sales_count'     => $sales->count(),
+            'total_revenue'   => $totalRevenue,
             'total_collected' => $totalCollected,
-            'total_owed' => $totalOwed,
-            'total_expenses' => $totalExpenses,
-            'net_profit' => $netProfit,
-            'sales' => $sales,
-            'expenses' => $expenses,
+            'total_owed'      => $totalOwed,
+            'total_expenses'  => $totalExpenses,
+            'net_profit'      => $netProfit,
+            'sales'           => $sales,
+            'expenses'        => $expenses,
         ]);
     }
 
     public function summary(Request $request)
     {
-        $business = $this->business($request);
-        $days = (int) $request->query('days', 30);
+        $business  = $this->business($request);
+        $days      = (int) $request->query('days', 30);
+        $branchId  = $request->query('branch_id');
+        $from      = now()->subDays($days);
 
-        $from = now()->subDays($days);
+        $salesQuery = $business->sales()->where('sold_at', '>=', $from);
+        if ($branchId) $salesQuery->where('branch_id', $branchId);
 
-        $salesData = $business->sales()
-            ->where('sold_at', '>=', $from)
-            ->selectRaw('
-                COUNT(*) as total_sales,
-                SUM(total_amount) as total_revenue,
-                SUM(amount_paid) as total_collected,
-                SUM(balance_owed) as total_outstanding,
-                COUNT(CASE WHEN is_partial THEN 1 END) as partial_sales
-            ')
-            ->first();
+        $salesData = $salesQuery->selectRaw('
+            COUNT(*) as total_sales,
+            SUM(total_amount) as total_revenue,
+            SUM(amount_paid) as total_collected,
+            SUM(balance_owed) as total_outstanding,
+            COUNT(CASE WHEN is_partial THEN 1 END) as partial_sales
+        ')->first();
 
-        $expenseData = $business->bkExpenses()
-            ->where('expensed_at', '>=', $from)
-            ->selectRaw('SUM(amount) as total_expenses, COUNT(*) as expense_count')
-            ->first();
+        $expensesQuery = $business->bkExpenses()->where('expensed_at', '>=', $from);
+        if ($branchId) $expensesQuery->where('branch_id', $branchId);
+        $expenseData = $expensesQuery->selectRaw('SUM(amount) as total_expenses, COUNT(*) as expense_count')->first();
 
-        $topProducts = DB::table('sale_items')
+        $topProductsQuery = \DB::table('sale_items')
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->join('products', 'products.id', '=', 'sale_items.product_id')
             ->where('sales.business_id', $business->id)
-            ->where('sales.sold_at', '>=', $from)
+            ->where('sales.sold_at', '>=', $from);
+        if ($branchId) $topProductsQuery->where('sales.branch_id', $branchId);
+
+        $topProducts = $topProductsQuery
             ->groupBy('products.id', 'products.name')
             ->selectRaw('products.id, products.name, SUM(sale_items.quantity) as qty_sold, SUM(sale_items.total_price) as revenue')
             ->orderByDesc('revenue')
@@ -82,11 +85,12 @@ class ReportsController extends Controller
 
         return response()->json([
             'period_days' => $days,
-            'from' => $from->toDateString(),
-            'to' => now()->toDateString(),
-            'sales' => $salesData,
-            'expenses' => $expenseData,
-            'net_profit' => (float)($salesData->total_collected ?? 0) - (float)($expenseData->total_expenses ?? 0),
+            'branch_id'   => $branchId,
+            'from'        => $from->toDateString(),
+            'to'          => now()->toDateString(),
+            'sales'       => $salesData,
+            'expenses'    => $expenseData,
+            'net_profit'  => (float)($salesData->total_collected ?? 0) - (float)($expenseData->total_expenses ?? 0),
             'top_products' => $topProducts,
         ]);
     }
