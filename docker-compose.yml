@@ -64,10 +64,12 @@ services:
       - "8001:8001"
     environment:
       - DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE}
+      - ML_SECRET_KEY=${ML_SECRET_KEY}
     depends_on:
       - postgres
     networks:
       - kitu_network
+      
 
 networks:
   kitu_network:

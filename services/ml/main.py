@@ -15,7 +15,7 @@ import threading
 import pytesseract
 import re
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.ensemble import IsolationForest
 from reportlab.lib.pagesizes import A4
@@ -23,8 +23,19 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.colors import HexColor
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.units import mm
-from fastapi import UploadFile, File
+from fastapi import UploadFile, File, FastAPI, HTTPException, Request, Depends
 from PIL import Image
+from fastapi.security import APIKeyHeader
+
+# ── Internal API key auth ─────────────────────────────────────────────────────
+ML_SECRET = os.getenv("ML_SECRET_KEY", "")
+api_key_header = APIKeyHeader(name="X-ML-Secret", auto_error=False)
+
+def require_internal_auth(key: str = Depends(api_key_header)):
+    if not ML_SECRET:
+        return  # Dev mode — no key set, allow all
+    if key != ML_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 class MpesaSmsParser:
     """Reusable M-Pesa SMS parser — used by both the REST endpoint and OCR."""
@@ -40,7 +51,7 @@ class MpesaSmsParser:
                 'amount': float(m.group(1).replace(',', '')),
                 'counterparty_name': m.group(2).strip(),
                 'counterparty_phone': m.group(3),
-                'transacted_at': self._extract_date(sms) or datetime.utcnow().isoformat(),
+                'transacted_at': self._extract_date(sms) or datetime.now(timezone.utc).isoformat(),
                 'mpesa_reference': self._extract_reference(sms),
             }
 
@@ -52,7 +63,7 @@ class MpesaSmsParser:
                 'amount': float(m.group(1).replace(',', '')),
                 'counterparty_name': m.group(2).strip(),
                 'counterparty_phone': m.group(3),
-                'transacted_at': self._extract_date(sms) or datetime.utcnow().isoformat(),
+                'transacted_at': self._extract_date(sms) or datetime.now(timezone.utc).isoformat(),
                 'mpesa_reference': self._extract_reference(sms),
             }
 
@@ -63,7 +74,7 @@ class MpesaSmsParser:
                 'type': 'withdrawal',
                 'amount': float(m.group(1).replace(',', '')),
                 'counterparty_name': 'ATM/Agent',
-                'transacted_at': self._extract_date(sms) or datetime.utcnow().isoformat(),
+                'transacted_at': self._extract_date(sms) or datetime.now(timezone.utc).isoformat(),
                 'mpesa_reference': self._extract_reference(sms),
             }
 
@@ -112,7 +123,7 @@ def get_or_train_forecast_model(business_id: int, df: pd.DataFrame):
 
         # Load from disk if exists and is fresh (< 24h old)
         if cache_path.exists():
-            age_hours = (datetime.utcnow().timestamp() - cache_path.stat().st_mtime) / 3600
+            age_hours = (datetime.now(timezone.utc).timestamp() - cache_path.stat().st_mtime) / 3600
             if age_hours < 24:
                 model = joblib.load(cache_path)
                 _forecast_models[business_id] = model
@@ -152,23 +163,59 @@ def _train_forecast_model(df: pd.DataFrame) -> GradientBoostingRegressor:
 
 
 @app.post("/train/{business_id}")
-def trigger_training(business_id: int):
+def trigger_training(business_id: int, _=Depends(require_internal_auth)):
     """Force retrain the forecast model for a business."""
     df = load_transactions(business_id)
     cache_path = MODEL_CACHE_DIR / f"forecast_{business_id}.joblib"
 
     with _model_lock:
         model = _train_forecast_model(df)
-        joblib.dump(cache_path.__str__(), cache_path)
+        joblib.dump(model, cache_path)
         _forecast_models[business_id] = model
 
     return {
         "message": f"Model retrained for business {business_id}",
         "training_samples": len(df),
-        "cached_at": datetime.utcnow().isoformat(),
+        "cached_at": datetime.now(timezone.utc).isoformat(),
     }
 
 MODEL_VERSION = "v0.2-seasonal-network-shap"
+
+# ── Minimum history gate ─────────────────────────────────────────────────────
+MIN_DAYS = 30
+MIN_TRANSACTIONS = 20
+
+
+def history_gate(df: pd.DataFrame) -> dict | None:
+    """Return an 'insufficient history' payload if df is too thin, else None."""
+    total_days = (df["transacted_at"].max() - df["transacted_at"].min()).days
+    if total_days >= MIN_DAYS and len(df) >= MIN_TRANSACTIONS:
+        return None
+    return {
+        "score": None,
+        "grade": None,
+        "data_quality": "insufficient",
+        "model_version": MODEL_VERSION,
+        "message": (
+            f"Insufficient history. Need {MIN_DAYS} days and {MIN_TRANSACTIONS} "
+            f"transactions. Have {total_days} days and {len(df)} transactions."
+        ),
+        "days_observed": total_days,
+        "transactions_observed": len(df),
+        "days_needed": max(0, MIN_DAYS - total_days),
+        "transactions_needed": max(0, MIN_TRANSACTIONS - len(df)),
+    }
+
+def score_and_grade(repayment_likelihood: float) -> tuple[int, str]:
+    """Single source of truth for score calculation."""
+    score = int(min(max(repayment_likelihood * 10, 0), 1000))
+    grade = (
+        "A" if score >= 800 else
+        "B" if score >= 650 else
+        "C" if score >= 500 else
+        "D" if score >= 350 else "F"
+    )
+    return score, grade
 
 # ── Tanzanian seasonal calendar ──────────────────────────────────────────────
 TANZANIAN_SEASONS = {
@@ -312,8 +359,14 @@ def health():
 
 
 @app.get("/score/{business_id}")
-def calculate_score(business_id: int):
+def calculate_score(business_id: int, _=Depends(require_internal_auth)):
     df = load_transactions(business_id)
+
+    # Minimum history gate
+    gate = history_gate(df)
+    if gate:
+        return {"business_id": business_id, **gate}
+
     factors = engineer_features(df)
 
     # ── Real SHAP explainability ──────────────────────────────────────────────
@@ -352,26 +405,20 @@ def calculate_score(business_id: int):
     }
 
     # Score calculation
-    final_score = int(min(max(factors["repayment_likelihood"] * 10, 0), 1000))
-    grade = (
-        "A" if final_score >= 800 else
-        "B" if final_score >= 650 else
-        "C" if final_score >= 500 else
-        "D" if final_score >= 350 else "F"
-    )
+    final_score, grade = score_and_grade(factors["repayment_likelihood"])
 
     return {
         "business_id": business_id,
         "score": final_score,
         "grade": grade,
         "model_version": MODEL_VERSION,
-        "calculated_at": datetime.utcnow().isoformat(),
+        "calculated_at": datetime.now(timezone.utc).isoformat(),
         "factors": factors,
         "shap_explanation": shap_explanation,
     }
 
 @app.get("/network/{business_id}")
-def analyse_network(business_id: int):
+def analyse_network(business_id: int, _=Depends(require_internal_auth)):
     """Build a transaction network graph for this business."""
     df = load_transactions(business_id)
 
@@ -420,12 +467,12 @@ def analyse_network(business_id: int):
         "loyal_counterparties": loyal_counterparties,
         "top_counterparties": top_counterparties,
         "network_health_score": round(network_score, 2),
-        "analysed_at": datetime.utcnow().isoformat(),
+        "analysed_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
 @app.get("/forecast/{business_id}")
-def forecast_cash_flow(business_id: int):
+def forecast_cash_flow(business_id: int, _=Depends(require_internal_auth)):
     """Predict next 14 days using cached trained model."""
     df = load_transactions(business_id)
 
@@ -485,11 +532,11 @@ def forecast_cash_flow(business_id: int):
         },
         "model_version": MODEL_VERSION,
         "model_cached": True,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 @app.post("/repayment-outcome")
-def record_repayment_outcome(payload: dict):
+def record_repayment_outcome(payload: dict, _=Depends(require_internal_auth)):
     """MFIs post repayment outcomes back to improve model accuracy."""
     required = ["business_id", "loan_amount", "outcome", "lender_id"]
     for field in required:
@@ -513,9 +560,9 @@ def record_repayment_outcome(payload: dict):
                 "outcome": payload["outcome"],
                 "loan_amount": payload["loan_amount"],
                 "lender_id": payload["lender_id"],
-                "posted_at": datetime.utcnow().isoformat(),
+                "posted_at": datetime.now(timezone.utc).isoformat(),
             }),
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
         })
         conn.commit()
 
@@ -523,23 +570,24 @@ def record_repayment_outcome(payload: dict):
         "message": "Repayment outcome recorded. Thank you — this improves our model.",
         "business_id": payload["business_id"],
         "outcome": payload["outcome"],
-        "recorded_at": datetime.utcnow().isoformat(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
 @app.get("/report/{business_id}")
-def generate_pdf_report(business_id: int):
+def generate_pdf_report(business_id: int, _=Depends(require_internal_auth)):
     """Generate a PDF credit report for a business."""
     df = load_transactions(business_id)
+
+    # Minimum history gate — a report can't carry a null score/grade like the
+    # JSON endpoints do, so this returns a 422 instead of a PDF.
+    gate = history_gate(df)
+    if gate:
+        raise HTTPException(status_code=422, detail=gate)
+
     factors = engineer_features(df)
 
-    score = int(min(max(factors["repayment_likelihood"] * 10, 0), 1000))
-    grade = (
-        "A" if score >= 800 else
-        "B" if score >= 650 else
-        "C" if score >= 500 else
-        "D" if score >= 350 else "F"
-    )
+    score, grade = score_and_grade(factors["repayment_likelihood"])
 
     # Build PDF in memory
     buffer = io.BytesIO()
@@ -565,7 +613,7 @@ def generate_pdf_report(business_id: int):
     # Header
     story.append(Paragraph("Kitu Analytics", title_style))
     story.append(Paragraph("Credit Intelligence Report", subtitle_style))
-    story.append(Paragraph(f"Business ID: {business_id} | Generated: {datetime.utcnow().strftime('%d %b %Y %H:%M')} UTC | Model: {MODEL_VERSION}", body_style))
+    story.append(Paragraph(f"Business ID: {business_id} | Generated: {datetime.now(timezone.utc).strftime('%d %b %Y %H:%M')} UTC | Model: {MODEL_VERSION}", body_style))
     story.append(Spacer(1, 10*mm))
 
     # Score summary table
@@ -664,28 +712,49 @@ def generate_pdf_report(business_id: int):
 
 
 @app.get("/bot-compliance/{business_id}")
-def bot_compliance_report(business_id: int):
-    """Bank of Tanzania compliance data for a business."""
+def bot_compliance_report(business_id: int, _=Depends(require_internal_auth)):
     df = load_transactions(business_id)
-    factors = engineer_features(df)
-    score = int(min(max(factors["repayment_likelihood"] * 10, 0), 1000))
 
-    # Score distribution analysis
+    # Minimum history gate
+    gate = history_gate(df)
+    if gate:
+        return {"business_id": business_id, **gate}
+
+    factors = engineer_features(df)
+    score, grade = score_and_grade(factors["repayment_likelihood"])
+
+    # Real consent check
+    consent_query = text("""
+        SELECT COUNT(*) FROM consent_records
+        WHERE user_id = (
+            SELECT user_id FROM businesses WHERE id = :business_id
+        )
+        AND consent_type = 'data_processing'
+        AND granted = true
+        AND withdrawn_at IS NULL
+    """)
+    with engine.connect() as conn:
+        consent_count = conn.execute(consent_query, {"business_id": business_id}).scalar()
+
+    consent_verified = consent_count > 0
+
     incoming = df[df["type"] == "incoming"]
     outgoing = df[df["type"].isin(["outgoing", "withdrawal"])]
 
     return {
         "business_id": business_id,
         "report_type": "BoT_compliance_v1",
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "model_version": MODEL_VERSION,
         "data_residency": "Johannesburg, ZA (DigitalOcean)",
-        "consent_verified": True,
+        "consent_verified": consent_verified,
+        "consent_note": "Verified against consent_records table" if consent_verified else "No active data_processing consent found",
         "scoring_summary": {
             "score": score,
             "factors_used": list(factors.keys()),
             "protected_attributes_used": [],
             "model_bias_flags": [],
+            "minimum_history_met": factors["total_days_observed"] >= 30 and factors["total_transactions"] >= 20,
         },
         "transaction_summary": {
             "total_transactions": len(df),
@@ -707,11 +776,12 @@ def bot_compliance_report(business_id: int):
             "User has right to withdraw consent and delete profile",
             "All scoring decisions logged in immutable audit trail",
             "Appeals resolved within 48 hours per SLA",
+            f"Consent status: {'Active' if consent_verified else 'NOT VERIFIED — do not share score'}",
         ],
     }
 
 @app.get("/fraud/{business_id}")
-def detect_fraud(business_id: int):
+def detect_fraud(business_id: int, _=Depends(require_internal_auth)):
     """Detect suspicious transaction patterns."""
     df = load_transactions(business_id)
 
@@ -819,16 +889,16 @@ def detect_fraud(business_id: int):
         "risk_level": risk_level,
         "flags": flags,
         "total_transactions_analysed": len(df),
-        "analysed_at": datetime.utcnow().isoformat(),
+        "analysed_at": datetime.now(timezone.utc).isoformat(),
         "model_version": MODEL_VERSION,
     }
 
 
 @app.get("/pre-approvals")
-def get_pre_approvals(min_score: int = 500, limit: int = 20):
-    """Return ranked list of businesses meeting minimum credit score threshold."""
+def get_pre_approvals(min_score: int = 500, limit: int = 20, _=Depends(require_internal_auth)):
+    """Return ranked list — single query with transaction summary joined."""
     query = text("""
-        SELECT DISTINCT ON (b.id)
+        SELECT
             b.id as business_id,
             b.name as business_name,
             b.type as business_type,
@@ -837,67 +907,60 @@ def get_pre_approvals(min_score: int = 500, limit: int = 20):
             cs.score,
             cs.grade,
             cs.repayment_likelihood,
-            cs.calculated_at
+            cs.calculated_at,
+            COUNT(t.id) as transaction_count,
+            COALESCE(SUM(CASE WHEN t.type = 'incoming' THEN t.amount ELSE 0 END), 0) as total_incoming,
+            MAX(t.transacted_at) as last_transaction_at,
+            COALESCE(
+                SUM(CASE WHEN t.type = 'incoming' THEN t.amount ELSE 0 END)
+                FILTER (WHERE t.transacted_at >= NOW() - INTERVAL '90 days'),
+                0
+            ) as recent_incoming_90d
         FROM businesses b
         JOIN users u ON u.id = b.user_id
-        JOIN credit_scores cs ON cs.business_id = b.id
+        JOIN (
+            SELECT DISTINCT ON (business_id)
+                business_id, score, grade, repayment_likelihood, calculated_at
+            FROM credit_scores
+            ORDER BY business_id, calculated_at DESC
+        ) cs ON cs.business_id = b.id
+        LEFT JOIN transactions t ON t.business_id = b.id
         WHERE cs.score >= :min_score
           AND b.status = 'active'
-        ORDER BY b.id, cs.calculated_at DESC
+        GROUP BY b.id, b.name, b.type, b.location, u.phone,
+                 cs.score, cs.grade, cs.repayment_likelihood, cs.calculated_at
+        ORDER BY cs.score DESC
+        LIMIT :limit
     """)
 
     with engine.connect() as conn:
-        result = conn.execute(query, {"min_score": min_score})
-        rows = result.fetchall()
+        rows = conn.execute(query, {"min_score": min_score, "limit": limit}).fetchall()
 
-    if not rows:
-        return {
-            "total": 0,
-            "min_score_threshold": min_score,
-            "leads": [],
-            "generated_at": datetime.utcnow().isoformat(),
+    leads = [
+        {
+            "business_id":              row[0],
+            "business_name":            row[1],
+            "business_type":            row[2],
+            "location":                 row[3],
+            "phone":                    row[4],
+            "credit_score":             row[5],
+            "grade":                    row[6],
+            "repayment_likelihood":     float(row[7]),
+            "score_calculated_at":      row[8].isoformat() if row[8] else None,
+            "transaction_count":        int(row[9]),
+            "total_incoming_tzs":       float(row[10]),
+            "last_transaction_at":      row[11].isoformat() if row[11] else None,
+            # Use 90-day incoming for loan recommendation — not all-time
+            "recommended_max_loan_tzs": round(float(row[12]) * 0.3),
         }
-
-    leads = []
-    for row in rows:
-        business_id = row[0]
-
-        # Get transaction summary for each lead
-        tx_query = text("""
-            SELECT
-                COUNT(*) as tx_count,
-                SUM(CASE WHEN type = 'incoming' THEN amount ELSE 0 END) as total_incoming,
-                MAX(transacted_at) as last_tx
-            FROM transactions
-            WHERE business_id = :business_id
-        """)
-        with engine.connect() as conn:
-            tx = conn.execute(tx_query, {"business_id": business_id}).fetchone()
-
-        leads.append({
-            "business_id": row[0],
-            "business_name": row[1],
-            "business_type": row[2],
-            "location": row[3],
-            "phone": row[4],
-            "credit_score": row[5],
-            "grade": row[6],
-            "repayment_likelihood": float(row[7]),
-            "score_calculated_at": row[8].isoformat() if row[8] else None,
-            "transaction_count": int(tx[0]) if tx else 0,
-            "total_incoming_tzs": float(tx[1]) if tx and tx[1] else 0,
-            "last_transaction_at": tx[2].isoformat() if tx and tx[2] else None,
-            "recommended_max_loan_tzs": round(float(tx[1]) * 0.3) if tx and tx[1] else 0,
-        })
-
-    # Sort by score descending
-    leads.sort(key=lambda x: x["credit_score"], reverse=True)
+        for row in rows
+    ]
 
     return {
-        "total": len(leads),
+        "total":               len(leads),
         "min_score_threshold": min_score,
-        "leads": leads[:limit],
-        "generated_at": datetime.utcnow().isoformat(),
+        "leads":               leads,
+        "generated_at":        datetime.now(timezone.utc).isoformat(),
     }
 
 # ── Repayment outcome model ───────────────────────────────────────────────────
@@ -925,7 +988,7 @@ def load_repayment_outcomes() -> pd.DataFrame:
     records = []
     for row in rows:
         try:
-            values = eval(str(row[1]))
+            values = json.loads(row[1]) if isinstance(row[1], str) else row[1]
             records.append({
                 "business_id": row[0],
                 "outcome": values.get("outcome"),
@@ -939,7 +1002,7 @@ def load_repayment_outcomes() -> pd.DataFrame:
 
 
 @app.post("/train-repayment-model")
-def train_repayment_model():
+def train_repayment_model(_=Depends(require_internal_auth)):
     """Train a real repayment prediction model from accumulated outcomes."""
     global _repayment_model
 
@@ -1000,7 +1063,7 @@ def train_repayment_model():
         "training_samples": len(X),
         "accuracy": round(accuracy, 4),
         "model_path": str(REPAYMENT_MODEL_PATH),
-        "trained_at": datetime.utcnow().isoformat(),
+        "trained_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -1019,11 +1082,11 @@ def model_status():
         "repayment_outcomes_collected": len(outcomes),
         "repayment_outcomes_needed_to_train": max(0, 10 - len(outcomes)),
         "model_version": MODEL_VERSION,
-        "checked_at": datetime.utcnow().isoformat(),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
     }
 
 @app.get("/score-bookkeeping/{business_id}")
-def score_with_bookkeeping(business_id: int):
+def score_with_bookkeeping(business_id: int, _=Depends(require_internal_auth)):
     """
     Enhanced credit score combining M-Pesa transactions
     with structured bookkeeping data for stronger signal.
@@ -1087,6 +1150,17 @@ def score_with_bookkeeping(business_id: int):
 
     if not has_mpesa and not has_bookkeeping:
         raise HTTPException(status_code=404, detail="No data found for this business")
+
+    # Minimum history gate — only blocks when M-Pesa is the sole data source.
+    # With bookkeeping records present, thin M-Pesa history is tolerated and the
+    # bookkeeping-only weighting below is used instead.
+    if has_mpesa:
+        gate = history_gate(df)
+        if gate and not has_bookkeeping:
+            return {"business_id": business_id, **gate}
+        if gate:
+            has_mpesa = False
+            mpesa_factors = None
 
     # ── Bookkeeping feature scores ────────────────────────────────────────────
     bk_factors = {}
@@ -1179,13 +1253,7 @@ def score_with_bookkeeping(business_id: int):
         data_quality = "standard"
         repayment_likelihood = mpesa_factors["repayment_likelihood"]
 
-    final_score = int(min(max(repayment_likelihood * 10, 0), 1000))
-    grade = (
-        "A" if final_score >= 800 else
-        "B" if final_score >= 650 else
-        "C" if final_score >= 500 else
-        "D" if final_score >= 350 else "F"
-    )
+    final_score, grade = score_and_grade(repayment_likelihood)
 
     return {
         "business_id": business_id,
@@ -1193,7 +1261,7 @@ def score_with_bookkeeping(business_id: int):
         "grade": grade,
         "data_quality": data_quality,
         "model_version": MODEL_VERSION,
-        "calculated_at": datetime.utcnow().isoformat(),
+        "calculated_at": datetime.now(timezone.utc).isoformat(),
         "data_sources": {
             "mpesa_transactions": has_mpesa,
             "bookkeeping_records": has_bookkeeping,
@@ -1211,7 +1279,7 @@ def score_with_bookkeeping(business_id: int):
     }
 
 @app.post("/ocr/parse-mpesa")
-async def ocr_parse_mpesa(file: UploadFile = File(...)):
+async def ocr_parse_mpesa(file: UploadFile = File(...), _=Depends(require_internal_auth)):
     """
     Extract M-Pesa transactions from a photo of SMS messages.
     Accepts: jpg, png, webp

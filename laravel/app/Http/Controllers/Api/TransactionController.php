@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers\Api;
 
-use Illuminate\Support\Facades\Http;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Transaction;
 use App\Services\MpesaSmsParser;
+use App\Services\MlService;
 use Illuminate\Http\Request;
 
 class TransactionController extends Controller
@@ -36,7 +36,8 @@ class TransactionController extends Controller
             'balance_after' => 'nullable|numeric',
         ]);
 
-        $transaction = $business->transactions()->create($request->validated());
+        $transaction = $business->transactions()
+            ->create($request->validated());
 
         return response()->json($transaction, 201);
     }
@@ -53,7 +54,9 @@ class TransactionController extends Controller
         $parsed = $parser->parse($request->sms_text);
 
         if (!$parsed) {
-            return response()->json(['message' => 'Could not parse SMS.'], 422);
+            return response()->json([
+                'message' => 'Could not parse SMS.'
+            ], 422);
         }
 
         $transaction = $business->transactions()->create([
@@ -114,20 +117,26 @@ class TransactionController extends Controller
             'photo' => 'required|image|max:10240', // max 10MB
         ]);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $file = $request->file('photo');
+
+        $contents = file_get_contents($file->getRealPath());
+        $filename = $file->getClientOriginalName();
+        $mime = $file->getMimeType();
 
         // Forward the image to the ML service
-        $response = Http::timeout(30)->attach(
-            'file',
-            file_get_contents($request->file('photo')->getRealPath()),
-            $request->file('photo')->getClientOriginalName(),
-            ['Content-Type' => $request->file('photo')->getMimeType()]
-        )->post("{$mlServiceUrl}/ocr/parse-mpesa");
+        $ml = new MlService();
+
+        $response = $ml->attach(
+            '/ocr/parse-mpesa',
+            $contents,
+            $filename,
+            $mime
+        );
 
         if ($response->failed()) {
             return response()->json([
                 'message' => 'OCR processing failed.',
-                'error'   => $response->json('detail') ?? 'ML service error',
+                'error' => $response->json('detail') ?? 'ML service error',
             ], 502);
         }
 
@@ -135,42 +144,53 @@ class TransactionController extends Controller
 
         if ($data['transactions_found'] === 0) {
             return response()->json([
-                'message'             => 'No M-Pesa transactions found in the image.',
-                'extracted_text'      => $data['extracted_text'],
-                'transactions_found'  => 0,
+                'message' => 'No M-Pesa transactions found in the image.',
+                'extracted_text' => $data['extracted_text'],
+                'transactions_found' => 0,
             ], 422);
         }
 
         // Save each parsed transaction to the database
         $saved = [];
+
         foreach ($data['transactions'] as $tx) {
             // Skip duplicates by reference
             if (!empty($tx['mpesa_reference'])) {
                 $exists = $business->transactions()
-                    ->where('mpesa_reference', $tx['mpesa_reference'])
+                    ->where(
+                        'mpesa_reference',
+                        $tx['mpesa_reference']
+                    )
                     ->exists();
-                if ($exists) continue;
+
+                if ($exists) {
+                    continue;
+                }
             }
 
             $transaction = $business->transactions()->create([
-                'type'               => $tx['type'],
-                'amount'             => $tx['amount'],
-                'counterparty_name'  => $tx['counterparty_name'] ?? 'Unknown',
-                'counterparty_phone' => $tx['counterparty_phone'] ?? null,
-                'mpesa_reference'    => $tx['mpesa_reference'] ?? null,
-                'transacted_at'      => $tx['transacted_at'],
-                'raw_sms'            => 'OCR extracted',
+                'type' => $tx['type'],
+                'amount' => $tx['amount'],
+                'counterparty_name' =>
+                    $tx['counterparty_name'] ?? 'Unknown',
+                'counterparty_phone' =>
+                    $tx['counterparty_phone'] ?? null,
+                'mpesa_reference' =>
+                    $tx['mpesa_reference'] ?? null,
+                'transacted_at' => $tx['transacted_at'],
+                'raw_sms' => 'OCR extracted',
             ]);
 
             $saved[] = $transaction;
         }
 
         return response()->json([
-            'message'            => count($saved) . ' transactions extracted and saved.',
+            'message' =>
+                count($saved) . ' transactions extracted and saved.',
             'transactions_found' => $data['transactions_found'],
             'transactions_saved' => count($saved),
-            'transactions'       => $saved,
-            'extracted_text'     => $data['extracted_text'],
+            'transactions' => $saved,
+            'extracted_text' => $data['extracted_text'],
         ]);
     }
 }

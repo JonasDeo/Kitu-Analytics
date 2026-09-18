@@ -7,8 +7,8 @@ use App\Models\Business;
 use App\Models\CreditScore;
 use App\Models\ScoreExplanation;
 use App\Models\ScoreAppeal;
+use App\Services\MlService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 
 class CreditScoreController extends Controller
 {
@@ -19,7 +19,9 @@ class CreditScoreController extends Controller
         $score = $business->latestCreditScore()->with('explanations')->first();
 
         if (!$score) {
-            return response()->json(['message' => 'No credit score yet. Request one first.'], 404);
+            return response()->json([
+                'message' => 'No credit score yet. Request one first.'
+            ], 404);
         }
 
         return response()->json($score);
@@ -29,32 +31,33 @@ class CreditScoreController extends Controller
     {
         $this->authorize('update', $business);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
+        $ml = new MlService();
 
-        $response = Http::timeout(10)->get("{$mlServiceUrl}/score/{$business->id}");
+        // Always use enhanced scoring — falls back to M-Pesa only if no bookkeeping data
+        $response = $ml->get("/score-bookkeeping/{$business->id}");
 
         if ($response->failed()) {
             return response()->json([
                 'message' => 'Could not calculate credit score.',
-                'error' => $response->json('detail') ?? 'ML service unavailable',
+                'error'   => $response->json('detail') ?? 'ML service unavailable',
             ], 502);
         }
 
         $data = $response->json();
 
         $creditScore = CreditScore::create([
-            'business_id' => $business->id,
-            'score' => $data['score'],
-            'grade' => $data['grade'],
-            'transaction_frequency_score' => $data['factors']['transaction_frequency_score'],
-            'cash_flow_stability_score' => $data['factors']['cash_flow_stability_score'],
-            'network_health_score' => $data['factors']['network_health_score'],
-            'repayment_likelihood' => $data['factors']['repayment_likelihood'],
-            'factors' => $data['factors'],
-            'calculated_at' => $data['calculated_at'],
+            'business_id'                  => $business->id,
+            'score'                        => $data['score'],
+            'grade'                        => $data['grade'],
+            'transaction_frequency_score'  => $data['mpesa_factors']['transaction_frequency_score'] ?? null,
+            'cash_flow_stability_score'    => $data['mpesa_factors']['cash_flow_stability_score'] ?? null,
+            'network_health_score'         => $data['mpesa_factors']['network_health_score'] ?? null,
+            'repayment_likelihood'         => $data['repayment_likelihood'],
+            'factors'                      => $data,
+            'calculated_at'                => now(),
         ]);
 
-        $this->generateExplanations($creditScore, $data['factors']);
+        $this->generateExplanations($creditScore, $data);
 
         return response()->json($creditScore->load('explanations'), 201);
     }
@@ -70,7 +73,9 @@ class CreditScoreController extends Controller
         $latestScore = $business->latestCreditScore;
 
         if (!$latestScore) {
-            return response()->json(['message' => 'No credit score to appeal.'], 404);
+            return response()->json([
+                'message' => 'No credit score to appeal.'
+            ], 404);
         }
 
         $appeal = ScoreAppeal::create([
@@ -85,13 +90,17 @@ class CreditScoreController extends Controller
         return response()->json($appeal, 201);
     }
 
-    private function generateExplanations(CreditScore $score, array $factors): void
-    {
+    private function generateExplanations(
+        CreditScore $score,
+        array $factors
+    ): void {
         $explanations = [
             [
                 'factor' => 'transaction_frequency',
                 'value' => $factors['transaction_frequency_score'],
-                'impact' => $factors['transaction_frequency_score'] >= 60 ? 'positive' : 'negative',
+                'impact' => $factors['transaction_frequency_score'] >= 60
+                    ? 'positive'
+                    : 'negative',
                 'explanation_en' => $factors['transaction_frequency_score'] >= 60
                     ? 'Your business transacts consistently, which builds trust with lenders.'
                     : 'Your business has gaps in transaction activity. More consistent activity could improve your score.',
@@ -102,7 +111,9 @@ class CreditScoreController extends Controller
             [
                 'factor' => 'cash_flow_stability',
                 'value' => $factors['cash_flow_stability_score'],
-                'impact' => $factors['cash_flow_stability_score'] >= 60 ? 'positive' : 'negative',
+                'impact' => $factors['cash_flow_stability_score'] >= 60
+                    ? 'positive'
+                    : 'negative',
                 'explanation_en' => $factors['cash_flow_stability_score'] >= 60
                     ? 'Your cash flow is stable from week to week.'
                     : 'Your cash flow varies significantly. Lenders see this as higher risk.',
@@ -113,7 +124,9 @@ class CreditScoreController extends Controller
             [
                 'factor' => 'network_health',
                 'value' => $factors['network_health_score'],
-                'impact' => $factors['network_health_score'] >= 60 ? 'positive' : 'negative',
+                'impact' => $factors['network_health_score'] >= 60
+                    ? 'positive'
+                    : 'negative',
                 'explanation_en' => 'Your business network strength is based on transaction volume and counterparty diversity.',
                 'explanation_sw' => 'Nguvu ya mtandao wa biashara yako inategemea kiwango cha miamala na utofauti wa wahusika.',
             ],
@@ -136,11 +149,13 @@ class CreditScoreController extends Controller
     {
         $this->authorize('view', $business);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(15)->get("{$mlServiceUrl}/score-bookkeeping/{$business->id}");
+        $ml = new MlService();
+        $response = $ml->get("/score-bookkeeping/{$business->id}");
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Enhanced scoring unavailable.'], 502);
+            return response()->json([
+                'message' => 'Enhanced scoring unavailable.'
+            ], 502);
         }
 
         $data = $response->json();
@@ -150,9 +165,12 @@ class CreditScoreController extends Controller
             'business_id' => $business->id,
             'score' => $data['score'],
             'grade' => $data['grade'],
-            'transaction_frequency_score' => $data['mpesa_factors']['transaction_frequency_score'] ?? null,
-            'cash_flow_stability_score' => $data['mpesa_factors']['cash_flow_stability_score'] ?? null,
-            'network_health_score' => $data['mpesa_factors']['network_health_score'] ?? null,
+            'transaction_frequency_score' =>
+                $data['mpesa_factors']['transaction_frequency_score'] ?? null,
+            'cash_flow_stability_score' =>
+                $data['mpesa_factors']['cash_flow_stability_score'] ?? null,
+            'network_health_score' =>
+                $data['mpesa_factors']['network_health_score'] ?? null,
             'repayment_likelihood' => $data['repayment_likelihood'],
             'factors' => $data,
             'calculated_at' => now(),

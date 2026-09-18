@@ -8,8 +8,8 @@ use App\Models\Lender;
 use App\Models\RevenueEvent;
 use App\Models\User;
 use App\Models\AuditLog;
+use App\Services\MlService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class LenderController extends Controller
@@ -21,18 +21,26 @@ class LenderController extends Controller
         $user = User::where('phone', $phone)->first();
 
         if (!$user) {
-            return response()->json(['message' => 'No user found with this phone number.'], 404);
+            return response()->json([
+                'message' => 'No user found with this phone number.'
+            ], 404);
         }
 
-        $business = $user->businesses()->with('latestCreditScore')->first();
+        $business = $user->businesses()
+            ->with('latestCreditScore')
+            ->first();
 
         if (!$business || !$business->latestCreditScore) {
-            return response()->json(['message' => 'No credit score available for this business.'], 404);
+            return response()->json([
+                'message' => 'No credit score available for this business.'
+            ], 404);
         }
 
         // Check user has consented to lender access
         if (!$user->hasConsented('lender_access')) {
-            return response()->json(['message' => 'User has not consented to lender access.'], 403);
+            return response()->json([
+                'message' => 'User has not consented to lender access.'
+            ], 403);
         }
 
         $score = $business->latestCreditScore;
@@ -78,7 +86,10 @@ class LenderController extends Controller
                 'cash_flow_stability' => $score->cash_flow_stability_score,
                 'network_health' => $score->network_health_score,
             ],
-            'recommendation' => $this->recommendation($score->score, $lender->min_credit_score),
+            'recommendation' => $this->recommendation(
+                $score->score,
+                $lender->min_credit_score
+            ),
             'billed_tzs' => 2500,
         ]);
     }
@@ -90,23 +101,39 @@ class LenderController extends Controller
         $user = User::where('phone', $phone)->first();
 
         if (!$user) {
-            return response()->json(['message' => 'No user found.'], 404);
+            return response()->json([
+                'message' => 'No user found.'
+            ], 404);
         }
 
         if (!$user->hasConsented('lender_access')) {
-            return response()->json(['message' => 'User has not consented to lender access.'], 403);
+            return response()->json([
+                'message' => 'User has not consented to lender access.'
+            ], 403);
         }
 
         $business = $user->businesses()
-            ->with(['latestCreditScore', 'transactions' => fn($q) => $q->latest('transacted_at')->limit(5)])
+            ->with([
+                'latestCreditScore',
+                'transactions' => fn($q) =>
+                    $q->latest('transacted_at')->limit(5)
+            ])
             ->first();
 
         if (!$business) {
-            return response()->json(['message' => 'No business profile found.'], 404);
+            return response()->json([
+                'message' => 'No business profile found.'
+            ], 404);
         }
 
-        $totalIncoming = $business->transactions()->where('type', 'incoming')->sum('amount');
-        $totalOutgoing = $business->transactions()->whereIn('type', ['outgoing', 'withdrawal'])->sum('amount');
+        $totalIncoming = $business->transactions()
+            ->where('type', 'incoming')
+            ->sum('amount');
+
+        $totalOutgoing = $business->transactions()
+            ->whereIn('type', ['outgoing', 'withdrawal'])
+            ->sum('amount');
+
         $transactionCount = $business->transactions()->count();
 
         return response()->json([
@@ -195,13 +222,19 @@ class LenderController extends Controller
         $lender = $this->authenticateLender($request);
 
         $user = User::where('phone', $phone)->first();
+
         if (!$user || !$user->hasConsented('lender_access')) {
-            return response()->json(['message' => 'Not found or consent not given.'], 404);
+            return response()->json([
+                'message' => 'Not found or consent not given.'
+            ], 404);
         }
 
         $business = $user->businesses()->first();
+
         if (!$business) {
-            return response()->json(['message' => 'No business found.'], 404);
+            return response()->json([
+                'message' => 'No business found.'
+            ], 404);
         }
 
         // Log billing event — PDF report costs more
@@ -212,20 +245,30 @@ class LenderController extends Controller
             'amount_tzs' => 5000,
             'status' => 'billed',
             'billed_at' => now(),
-            'metadata' => ['business_id' => $business->id, 'type' => 'pdf_credit_report'],
+            'metadata' => [
+                'business_id' => $business->id,
+                'type' => 'pdf_credit_report',
+            ],
         ]);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(30)->get("{$mlServiceUrl}/report/{$business->id}");
+        $ml = new MlService();
+        $response = $ml->get("/report/{$business->id}");
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Could not generate report.'], 502);
+            return response()->json([
+                'message' => 'Could not generate report.'
+            ], 502);
         }
 
-        return response($response->body(), 200, [
-            'Content-Type' => 'application/pdf',
-            'Content-Disposition' => "attachment; filename=kitu_credit_report_{$business->id}.pdf",
-        ]);
+        return response(
+            $response->body(),
+            200,
+            [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' =>
+                    "attachment; filename=kitu_credit_report_{$business->id}.pdf",
+            ]
+        );
     }
 
     public function postRepaymentOutcome(Request $request)
@@ -239,17 +282,24 @@ class LenderController extends Controller
         ]);
 
         $user = User::where('phone', $request->phone)->first();
+
         if (!$user) {
-            return response()->json(['message' => 'User not found.'], 404);
+            return response()->json([
+                'message' => 'User not found.'
+            ], 404);
         }
 
         $business = $user->businesses()->first();
+
         if (!$business) {
-            return response()->json(['message' => 'Business not found.'], 404);
+            return response()->json([
+                'message' => 'Business not found.'
+            ], 404);
         }
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(10)->post("{$mlServiceUrl}/repayment-outcome", [
+        $ml = new MlService();
+
+        $response = $ml->post('/repayment-outcome', [
             'business_id' => $business->id,
             'loan_amount' => $request->loan_amount,
             'outcome' => $request->outcome,
@@ -257,7 +307,9 @@ class LenderController extends Controller
         ]);
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Could not record outcome.'], 502);
+            return response()->json([
+                'message' => 'Could not record outcome.'
+            ], 502);
         }
 
         return response()->json($response->json());
@@ -267,17 +319,24 @@ class LenderController extends Controller
     {
         $lender = $this->authenticateLender($request);
 
-        $minScore = $request->query('min_score', $lender->min_credit_score);
+        $minScore = $request->query(
+            'min_score',
+            $lender->min_credit_score
+        );
+
         $limit = $request->query('limit', 20);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(20)->get("{$mlServiceUrl}/pre-approvals", [
+        $ml = new MlService();
+
+        $response = $ml->get('/pre-approvals', [
             'min_score' => $minScore,
             'limit' => $limit,
         ]);
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Pre-approval engine unavailable.'], 502);
+            return response()->json([
+                'message' => 'Pre-approval engine unavailable.'
+            ], 502);
         }
 
         // Bill lender for pre-approval batch
@@ -297,9 +356,13 @@ class LenderController extends Controller
         }
 
         // Send SMS to each pre-approved business
-        if ($response->json('total') > 0 && $request->query('notify', false)) {
+        if (
+            $response->json('total') > 0 &&
+            $request->query('notify', false)
+        ) {
             $smsService = new \App\Services\SmsService();
             $notified = 0;
+
             foreach ($response->json('leads') as $lead) {
                 $sent = $smsService->sendPreApprovalOffer(
                     $lead['phone'],
@@ -307,12 +370,17 @@ class LenderController extends Controller
                     (int) $lead['recommended_max_loan_tzs'],
                     $lender->name
                 );
-                if ($sent) $notified++;
+
+                if ($sent) {
+                    $notified++;
+                }
             }
-            // Add to response
-            return response()->json(array_merge($response->json(), [
-                'sms_notifications_sent' => $notified,
-            ]));
+
+            return response()->json(
+                array_merge($response->json(), [
+                    'sms_notifications_sent' => $notified,
+                ])
+            );
         }
 
         return response()->json($response->json());

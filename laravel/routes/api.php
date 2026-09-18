@@ -149,14 +149,14 @@ Route::prefix('v1')->group(function () {
 
         // ── Admin routes ──────────────────────────────────────────────────────
         Route::get('/admin/model-status', function () {
-            $response = \Illuminate\Support\Facades\Http::get(env('ML_SERVICE_URL', 'http://ml:8001') . '/model-status');
-            return response()->json($response->json());
-        });
+            $ml = new \App\Services\MlService();
+            return response()->json($ml->get('/model-status')->json());
+        })->middleware('auth:sanctum');
 
         Route::post('/admin/train-model', function () {
-            $response = \Illuminate\Support\Facades\Http::post(env('ML_SERVICE_URL', 'http://ml:8001') . '/train-repayment-model');
-            return response()->json($response->json());
-        });
+            $ml = new \App\Services\MlService();
+            return response()->json($ml->post('/train-repayment-model')->json());
+        })->middleware('auth:sanctum');
     });
 
     

@@ -2,17 +2,21 @@
 
 namespace App\Http\Controllers\Api;
 
-use Illuminate\Support\Facades\Http;
 use App\Http\Controllers\Controller;
-use App\Models\Business;
-use Illuminate\Http\Request;
 use App\Models\AuditLog;
+use App\Models\Business;
+use App\Services\MlService;
+use Illuminate\Http\Request;
 
 class BusinessController extends Controller
 {
     public function index(Request $request)
     {
-        $businesses = $request->user()->businesses()->with('latestCreditScore')->get();
+        $businesses = $request->user()
+            ->businesses()
+            ->with('latestCreditScore')
+            ->get();
+
         return response()->json($businesses);
     }
 
@@ -28,7 +32,9 @@ class BusinessController extends Controller
             'employee_count' => 'nullable|integer|min:1',
         ]);
 
-        $business = $request->user()->businesses()->create($validated);
+        $business = $request->user()
+            ->businesses()
+            ->create($validated);
 
         return response()->json($business, 201);
     }
@@ -38,7 +44,10 @@ class BusinessController extends Controller
         $this->authorize('view', $business);
 
         return response()->json(
-            $business->load(['latestCreditScore', 'alerts' => fn($q) => $q->active()->unread()])
+            $business->load([
+                'latestCreditScore',
+                'alerts' => fn ($q) => $q->active()->unread()
+            ])
         );
     }
 
@@ -64,11 +73,13 @@ class BusinessController extends Controller
     {
         $this->authorize('view', $business);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(15)->get("{$mlServiceUrl}/network/{$business->id}");
+        $ml = new MlService();
+        $response = $ml->get("/network/{$business->id}");
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Network analysis unavailable.'], 502);
+            return response()->json([
+                'message' => 'Network analysis unavailable.'
+            ], 502);
         }
 
         return response()->json($response->json());
@@ -78,11 +89,13 @@ class BusinessController extends Controller
     {
         $this->authorize('view', $business);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(15)->get("{$mlServiceUrl}/forecast/{$business->id}");
+        $ml = new MlService();
+        $response = $ml->get("/forecast/{$business->id}");
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Forecast unavailable.'], 502);
+            return response()->json([
+                'message' => 'Forecast unavailable.'
+            ], 502);
         }
 
         return response()->json($response->json());
@@ -92,11 +105,13 @@ class BusinessController extends Controller
     {
         $this->authorize('view', $business);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(15)->get("{$mlServiceUrl}/bot-compliance/{$business->id}");
+        $ml = new MlService();
+        $response = $ml->get("/bot-compliance/{$business->id}");
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Compliance report unavailable.'], 502);
+            return response()->json([
+                'message' => 'Compliance report unavailable.'
+            ], 502);
         }
 
         return response()->json($response->json());
@@ -106,28 +121,37 @@ class BusinessController extends Controller
     {
         $this->authorize('view', $business);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(30)->get("{$mlServiceUrl}/report/{$business->id}");
+        $ml = new MlService();
+        $response = $ml->get("/report/{$business->id}");
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Could not generate report.'], 502);
+            return response()->json([
+                'message' => 'Could not generate report.'
+            ], 502);
         }
 
-        return response($response->body(), 200, [
-            'Content-Type' => 'application/pdf',
-            'Content-Disposition' => "attachment; filename=kitu_credit_report_{$business->id}.pdf",
-        ]);
+        return response(
+            $response->body(),
+            200,
+            [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' =>
+                    "attachment; filename=kitu_credit_report_{$business->id}.pdf",
+            ]
+        );
     }
 
     public function fraudCheck(Request $request, Business $business)
     {
         $this->authorize('view', $business);
 
-        $mlServiceUrl = env('ML_SERVICE_URL', 'http://ml:8001');
-        $response = Http::timeout(15)->get("{$mlServiceUrl}/fraud/{$business->id}");
+        $ml = new MlService();
+        $response = $ml->get("/fraud/{$business->id}");
 
         if ($response->failed()) {
-            return response()->json(['message' => 'Fraud check unavailable.'], 502);
+            return response()->json([
+                'message' => 'Fraud check unavailable.'
+            ], 502);
         }
 
         // Log fraud check in audit trail
